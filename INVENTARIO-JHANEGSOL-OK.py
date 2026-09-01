@@ -67,9 +67,18 @@ def ejecutar_consulta(
         st.error(f"⚠️ Error en base de datos (Tabla '{tabla}'): {e}")
         return None
 
-# --- ESTADO DE SESIÓN ---
-if "carrito" not in st.session_state:
-    st.session_state.carrito = []
+# --- ESTADOS INDEPENDIENTES Y PROTEGIDOS ---
+if "carrito_ventas" not in st.session_state:
+    st.session_state.carrito_ventas = []
+
+if "carrito_nc" not in st.session_state:
+    st.session_state.carrito_nc = []
+
+if "pdf_generado" not in st.session_state:
+    st.session_state.pdf_generado = None
+
+if "num_ultimo_comp" not in st.session_state:
+    st.session_state.num_ultimo_comp = ""
 
 # --- GENERADOR DE PDF ---
 def generar_pdf_comprobante(
@@ -174,6 +183,104 @@ def generar_pdf_comprobante(
     doc.build(story)
     buffer.seek(0)
     return buffer
+
+# --- CALLBACK EXCLUSIVO DE VENTAS: DESCUENTA EXACTAMENTE 1 SOLA VEZ ---
+def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen):
+    if not st.session_state.carrito_ventas:
+        return
+
+    comp_data = {
+        "tipo_comprobante": tipo_doc,
+        "serie_numero": serie_num,
+        "cliente_nombre": cliente_nom,
+        "cliente_documento": cliente_doc,
+        "subtotal": round(subtotal, 2),
+        "igv": round(igv, 2),
+        "total": round(total_gen, 2),
+    }
+    res = ejecutar_consulta("comprobantes", "insert", comp_data)
+
+    if res and res.data:
+        comp_id = res.data[0]["id"]
+
+        for item in st.session_state.carrito_ventas:
+            cant_exacta = int(item["cantidad"])
+            p_id = item["id"]
+
+            det = {
+                "comprobante_id": comp_id,
+                "producto_id": p_id,
+                "cantidad": cant_exacta,
+                "precio_unitario": item["precio_unitario"],
+            }
+            ejecutar_consulta("detalle_comprobante", "insert", det)
+
+            # RESTA ÚNICA ATÓMICA DE STOCK
+            res_prod = supabase.table("productos").select("stock").eq("id", p_id).execute()
+            if res_prod.data:
+                stock_actual = int(res_prod.data[0]["stock"] or 0)
+                nuevo_stock = stock_actual - cant_exacta
+                supabase.table("productos").update({"stock": nuevo_stock}).eq("id", p_id).execute()
+
+        st.session_state.pdf_generado = generar_pdf_comprobante(
+            tipo_doc, serie_num, cliente_nom, cliente_doc, st.session_state.carrito_ventas, subtotal, igv, total_gen
+        )
+        st.session_state.num_ultimo_comp = serie_num
+        st.session_state.carrito_ventas = []
+
+# --- CALLBACK EXCLUSIVO DE NOTA DE CRÉDITO: SUMA EXACTAMENTE 1 SOLA VEZ ---
+def callback_emito_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota):
+    if not st.session_state.carrito_nc:
+        return
+
+    comp_data = {
+        "tipo_comprobante": tipo_nota,
+        "serie_numero": serie_nota,
+        "cliente_nombre": cliente_nom,
+        "cliente_documento": cliente_doc,
+        "subtotal": round(subtotal, 2),
+        "igv": round(igv, 2),
+        "total": round(total_gen, 2),
+    }
+    res = ejecutar_consulta("comprobantes", "insert", comp_data)
+
+    if res and res.data:
+        comp_id = res.data[0]["id"]
+
+        for item in st.session_state.carrito_nc:
+            cant_retorno = int(item["cantidad"])
+            p_id = item["id"]
+
+            det = {
+                "comprobante_id": comp_id,
+                "producto_id": p_id,
+                "cantidad": cant_retorno,
+                "precio_unitario": item["precio_unitario"],
+            }
+            ejecutar_consulta("detalle_comprobante", "insert", det)
+
+            if tipo_nota == "NOTA DE CRÉDITO":
+                # SUMA ÚNICA ATÓMICA DE STOCK (DEVOLUCIÓN)
+                res_prod = supabase.table("productos").select("stock").eq("id", p_id).execute()
+                if res_prod.data:
+                    stock_actual = int(res_prod.data[0]["stock"] or 0)
+                    stock_devuelto = stock_actual + cant_retorno
+                    supabase.table("productos").update({"stock": stock_devuelto}).eq("id", p_id).execute()
+
+                reg_dev = {
+                    "numero_boleta": f"{serie_nota} (Afecta: {doc_ref})",
+                    "producto_id": p_id,
+                    "cantidad": cant_retorno,
+                    "precio": float(item["precio_unitario"]),
+                    "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
+                }
+                ejecutar_consulta("devoluciones", "insert", reg_dev)
+
+        st.session_state.pdf_generado = generar_pdf_comprobante(
+            tipo_nota, serie_nota, cliente_nom, cliente_doc, st.session_state.carrito_nc, subtotal, igv, total_gen, doc_referencia=doc_ref, motivo=motivo_nota
+        )
+        st.session_state.num_ultimo_comp = serie_nota
+        st.session_state.carrito_nc = []
 
 # --- INTERFAZ PRINCIPAL ---
 st.title("📦 Sistema Comercial, Inventarios y Facturación - Jhanegsol")
@@ -332,7 +439,7 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
                     st.rerun()
 
 # -------------------------------------------------------------------
-# 5. VENTAS DIRECTAS (DESCUENTAN STOCK SIEMPRE)
+# 5. VENTAS DIRECTAS (BOLETAS Y FACTURAS)
 # -------------------------------------------------------------------
 elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
     st.header("🧾 Punto de Venta: Boletas, Facturas y Tickets")
@@ -340,7 +447,6 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
     c1, c2 = st.columns(2)
     with c1:
         tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA"])
-
         prefijo = "F001" if tipo_doc == "FACTURA" else ("T001" if tipo_doc == "TICKET DE VENTA" else "B001")
 
         ult_comps = ejecutar_consulta(
@@ -387,45 +493,52 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
         with cp1:
             p_sel_key = st.selectbox("Buscar Producto", list(dict_prods.keys()))
         with cp2:
-            cant_v = st.number_input("Cantidad", min_value=1, value=1)
+            cant_v = st.number_input("Cantidad", min_value=1, value=1, key="v_input_cant_unica")
         with cp3:
             st.write("")
             st.write("")
             if st.button("➕ Agregar al Carrito"):
                 p_info = dict_prods[p_sel_key]
+                ya_en_carrito = next((x for x in st.session_state.carrito_ventas if x["id"] == p_info["id"]), None)
+                cant_total_req = cant_v + (ya_en_carrito["cantidad"] if ya_en_carrito else 0)
+
                 if p_info["stock"] <= 0:
                     st.error("❌ El producto no tiene stock.")
-                elif cant_v > p_info["stock"]:
-                    st.error(f"⚠️ Cantidad supera el stock actual ({p_info['stock']}).")
+                elif cant_total_req > p_info["stock"]:
+                    st.error(f"⚠️ Cantidad supera el stock disponible ({p_info['stock']}).")
                 else:
-                    st.session_state.carrito.append({
-                        "id": p_info["id"],
-                        "codigo": p_info["codigo"],
-                        "descripcion": p_info["descripcion"],
-                        "cantidad": cant_v,
-                        "precio_unitario": p_info["precio"],
-                        "subtotal": cant_v * p_info["precio"],
-                    })
+                    if ya_en_carrito:
+                        ya_en_carrito["cantidad"] += cant_v
+                        ya_en_carrito["subtotal"] = ya_en_carrito["cantidad"] * ya_en_carrito["precio_unitario"]
+                    else:
+                        st.session_state.carrito_ventas.append({
+                            "id": p_info["id"],
+                            "codigo": p_info["codigo"],
+                            "descripcion": p_info["descripcion"],
+                            "cantidad": cant_v,
+                            "precio_unitario": p_info["precio"],
+                            "subtotal": cant_v * p_info["precio"],
+                        })
                     st.success("✅ Agregado")
                     st.rerun()
 
-    if st.session_state.carrito:
+    if st.session_state.carrito_ventas:
         st.subheader("📋 Detalle de la Venta")
-        for idx, item in enumerate(st.session_state.carrito):
+        for idx, item in enumerate(st.session_state.carrito_ventas):
             col_d1, col_d2, col_d3, col_d4 = st.columns([3, 1, 1, 1])
             col_d1.write(f"**{item['codigo']}** - {item['descripcion']}")
             nueva_cant = col_d2.number_input("Cant.", min_value=1, value=int(item["cantidad"]), key=f"v_cant_{idx}")
             col_d3.write(f"P.U: S/. {item['precio_unitario']:.2f}")
 
-            st.session_state.carrito[idx]["cantidad"] = nueva_cant
-            st.session_state.carrito[idx]["subtotal"] = nueva_cant * item["precio_unitario"]
-            col_d4.write(f"Subtotal: S/. {st.session_state.carrito[idx]['subtotal']:.2f}")
+            st.session_state.carrito_ventas[idx]["cantidad"] = nueva_cant
+            st.session_state.carrito_ventas[idx]["subtotal"] = nueva_cant * item["precio_unitario"]
+            col_d4.write(f"Subtotal: S/. {st.session_state.carrito_ventas[idx]['subtotal']:.2f}")
 
         if st.button("🗑️ Vaciar Carrito"):
-            st.session_state.carrito = []
+            st.session_state.carrito_ventas = []
             st.rerun()
 
-        total_gen = sum(float(i["subtotal"]) for i in st.session_state.carrito)
+        total_gen = sum(float(i["subtotal"]) for i in st.session_state.carrito_ventas)
         subtotal = total_gen / 1.18
         igv = total_gen - subtotal
 
@@ -436,50 +549,26 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
 
         st.divider()
 
-        if st.button(f"🖨️ EMITIR {tipo_doc} Y 🔴 DESCONTAR STOCK", type="primary", use_container_width=True):
-            comp_data = {
-                "tipo_comprobante": tipo_doc,
-                "serie_numero": serie_num,
-                "cliente_nombre": cliente_nom,
-                "cliente_documento": cliente_doc,
-                "subtotal": round(subtotal, 2),
-                "igv": round(igv, 2),
-                "total": round(total_gen, 2),
-            }
-            res = ejecutar_consulta("comprobantes", "insert", comp_data)
+        st.button(
+            f"🖨️ EMITIR {tipo_doc} Y 🔴 DESCONTAR STOCK",
+            type="primary",
+            use_container_width=True,
+            on_click=callback_emito_venta,
+            args=(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen),
+        )
 
-            if res and res.data:
-                comp_id = res.data[0]["id"]
-
-                for item in st.session_state.carrito:
-                    det = {
-                        "comprobante_id": comp_id,
-                        "producto_id": item["id"],
-                        "cantidad": item["cantidad"],
-                        "precio_unitario": item["precio_unitario"],
-                    }
-                    ejecutar_consulta("detalle_comprobante", "insert", det)
-
-                    # LÓGICA ESTRICTA DE DESCUENTO DE STOCK
-                    res_prod = supabase.table("productos").select("stock").eq("id", item["id"]).execute()
-                    if res_prod.data:
-                        stock_actual = int(res_prod.data[0]["stock"] or 0)
-                        stock_nuevo = stock_actual - int(item["cantidad"])
-                        supabase.table("productos").update({"stock": stock_nuevo}).eq("id", item["id"]).execute()
-
-                pdf_bytes = generar_pdf_comprobante(
-                    tipo_doc, serie_num, cliente_nom, cliente_doc, st.session_state.carrito, subtotal, igv, total_gen
-                )
-
-                st.balloons()
-                st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito!")
-                st.download_button(
-                    label="📄 Descargar PDF", data=pdf_bytes, file_name=f"{serie_num}.pdf", mime="application/pdf"
-                )
-                st.session_state.carrito = []
+    if st.session_state.pdf_generado and st.session_state.num_ultimo_comp == serie_num:
+        st.balloons()
+        st.success(f"🎉 Comprobante emitido con éxito.")
+        st.download_button(
+            label="📄 Descargar Comprobante PDF",
+            data=st.session_state.pdf_generado,
+            file_name=f"{serie_num}.pdf",
+            mime="application/pdf",
+        )
 
 # -------------------------------------------------------------------
-# 6. NOTAS DE CRÉDITO Y DÉBITO (MÓDULO SEPARADO Y EXCLUSIVO)
+# 6. NOTAS DE CRÉDITO Y DÉBITO (CON SUMA GARANTIZADA DE STOCK)
 # -------------------------------------------------------------------
 elif menu == "📝 Notas de Crédito y Débito":
     st.header("📝 Gestión Exclusiva de Notas de Crédito y Débito")
@@ -541,7 +630,7 @@ elif menu == "📝 Notas de Crédito y Débito":
 
             motivo_nota = st.text_area("Detalle explicativo *")
 
-        if st.button("📥 Importar Productos para Ajustar"):
+        if st.button("📥 Importar Productos del Comprobante"):
             detalles_orig = (
                 supabase.table("detalle_comprobante")
                 .select("producto_id, cantidad, precio_unitario, productos(id, codigo, descripcion)")
@@ -551,10 +640,10 @@ elif menu == "📝 Notas de Crédito y Débito":
             )
 
             if detalles_orig:
-                st.session_state.carrito = []
+                st.session_state.carrito_nc = []
                 for d in detalles_orig:
                     p = d.get("productos") or {}
-                    st.session_state.carrito.append({
+                    st.session_state.carrito_nc.append({
                         "id": d["producto_id"],
                         "codigo": p.get("codigo", "N/A"),
                         "descripcion": p.get("descripcion", "Producto"),
@@ -562,13 +651,13 @@ elif menu == "📝 Notas de Crédito y Débito":
                         "precio_unitario": float(d["precio_unitario"]),
                         "subtotal": float(abs(int(d["cantidad"])) * float(d["precio_unitario"])),
                     })
-                st.success("✅ Items cargados. Modifica las cantidades que realmente se devuelven.")
+                st.success("✅ Productos importados al formulario de devolución.")
                 st.rerun()
 
-        if st.session_state.carrito:
-            st.subheader("📋 Productos Afectados por la Nota")
+        if st.session_state.carrito_nc:
+            st.subheader("📋 Productos a Modificar por la Nota")
 
-            for idx, item in enumerate(st.session_state.carrito):
+            for idx, item in enumerate(st.session_state.carrito_nc):
                 cd1, cd2, cd3, cd4 = st.columns([3, 1, 1, 1])
                 cd1.write(f"**{item['codigo']}** - {item['descripcion']}")
                 cant_devolver = cd2.number_input(
@@ -576,11 +665,11 @@ elif menu == "📝 Notas de Crédito y Débito":
                 )
                 cd3.write(f"P.U: S/. {item['precio_unitario']:.2f}")
 
-                st.session_state.carrito[idx]["cantidad"] = cant_devolver
-                st.session_state.carrito[idx]["subtotal"] = cant_devolver * item["precio_unitario"]
-                cd4.write(f"Subtotal: S/. {st.session_state.carrito[idx]['subtotal']:.2f}")
+                st.session_state.carrito_nc[idx]["cantidad"] = cant_devolver
+                st.session_state.carrito_nc[idx]["subtotal"] = cant_devolver * item["precio_unitario"]
+                cd4.write(f"Subtotal: S/. {st.session_state.carrito_nc[idx]['subtotal']:.2f}")
 
-            total_gen = sum(float(i["subtotal"]) for i in st.session_state.carrito)
+            total_gen = sum(float(i["subtotal"]) for i in st.session_state.carrito_nc)
             subtotal = total_gen / 1.18
             igv = total_gen - subtotal
 
@@ -592,83 +681,42 @@ elif menu == "📝 Notas de Crédito y Débito":
             st.divider()
 
             if motivo_nota != "":
-                if tipo_nota == "NOTA DE CRÉDITO":
-                    lbl_btn_nc = f"🟢 EMITIR NOTA DE CRÉDITO Y AUMENTAR STOCK (+{sum(i['cantidad'] for i in st.session_state.carrito)})"
-                else:
-                    lbl_btn_nc = "🟡 EMITIR NOTA DE DÉBITO"
+                lbl_btn_nc = (
+                    f"🟢 EMITIR NOTA DE CRÉDITO Y AUMENTAR STOCK (+{sum(i['cantidad'] for i in st.session_state.carrito_nc)})"
+                    if tipo_nota == "NOTA DE CRÉDITO"
+                    else "🟡 EMITIR NOTA DE DÉBITO"
+                )
 
-                if st.button(lbl_btn_nc, type="primary", use_container_width=True):
-                    comp_data = {
-                        "tipo_comprobante": tipo_nota,
-                        "serie_numero": serie_nota,
-                        "cliente_nombre": cliente_nom,
-                        "cliente_documento": cliente_doc,
-                        "subtotal": round(subtotal, 2),
-                        "igv": round(igv, 2),
-                        "total": round(total_gen, 2),
-                    }
-                    res = ejecutar_consulta("comprobantes", "insert", comp_data)
-
-                    if res and res.data:
-                        comp_id = res.data[0]["id"]
-
-                        for item in st.session_state.carrito:
-                            det = {
-                                "comprobante_id": comp_id,
-                                "producto_id": item["id"],
-                                "cantidad": item["cantidad"],
-                                "precio_unitario": item["precio_unitario"],
-                            }
-                            ejecutar_consulta("detalle_comprobante", "insert", det)
-
-                            # SUMA EXPLÍCITA Y GARANTIZADA AL INVENTARIO (Solo Nota de Crédito)
-                            if tipo_nota == "NOTA DE CRÉDITO":
-                                res_prod = (
-                                    supabase.table("productos").select("stock").eq("id", item["id"]).execute()
-                                )
-                                if res_prod.data:
-                                    stock_previo = int(res_prod.data[0]["stock"] or 0)
-                                    cantidad_retorno = int(item["cantidad"])
-                                    stock_incrementado = stock_previo + cantidad_retorno
-
-                                    supabase.table("productos").update({"stock": stock_incrementado}).eq(
-                                        "id", item["id"]
-                                    ).execute()
-
-                                # Registro en historial de devoluciones
-                                reg_dev = {
-                                    "numero_boleta": f"{serie_nota} (Afecta: {doc_ref})",
-                                    "producto_id": item["id"],
-                                    "cantidad": int(item["cantidad"]),
-                                    "precio": float(item["precio_unitario"]),
-                                    "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
-                                }
-                                ejecutar_consulta("devoluciones", "insert", reg_dev)
-
-                        pdf_bytes = generar_pdf_comprobante(
-                            tipo_nota,
-                            serie_nota,
-                            cliente_nom,
-                            cliente_doc,
-                            st.session_state.carrito,
-                            subtotal,
-                            igv,
-                            total_gen,
-                            doc_referencia=doc_ref,
-                            motivo=motivo_nota,
-                        )
-
-                        st.balloons()
-                        st.success(f"✅ {tipo_nota} {serie_nota} procesada. El stock fue incrementado correctamente.")
-                        st.download_button(
-                            label="📄 Descargar PDF de la Nota",
-                            data=pdf_bytes,
-                            file_name=f"{serie_nota}.pdf",
-                            mime="application/pdf",
-                        )
-                        st.session_state.carrito = []
+                st.button(
+                    lbl_btn_nc,
+                    type="primary",
+                    use_container_width=True,
+                    on_click=callback_emito_nota,
+                    args=(
+                        tipo_nota,
+                        serie_nota,
+                        cliente_nom,
+                        cliente_doc,
+                        subtotal,
+                        igv,
+                        total_gen,
+                        doc_ref,
+                        cat_motivo,
+                        motivo_nota,
+                    ),
+                )
             else:
-                st.warning("⚠️ Debes detallar la razón o motivo del ajuste antes de emitir.")
+                st.warning("⚠️ Ingresa un motivo explicativo para activar la emisión.")
+
+    if st.session_state.pdf_generado and st.session_state.num_ultimo_comp == serie_nota:
+        st.balloons()
+        st.success(f"✅ {tipo_nota} procesada correctamente. Stock restituido.")
+        st.download_button(
+            label="📄 Descargar PDF de la Nota",
+            data=st.session_state.pdf_generado,
+            file_name=f"{serie_nota}.pdf",
+            mime="application/pdf",
+        )
 
 # -------------------------------------------------------------------
 # 7. HISTÓRICO DE COMPROBANTES
