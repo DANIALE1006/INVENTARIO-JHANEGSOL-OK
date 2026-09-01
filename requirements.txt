@@ -1,6 +1,6 @@
 streamlit
 supabase
 pandas
-plotly
 reportlab
-fpdf2
+pdf2image
+Pillow
