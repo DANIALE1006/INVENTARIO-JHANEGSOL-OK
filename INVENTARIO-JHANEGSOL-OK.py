@@ -71,110 +71,6 @@ def ejecutar_consulta(
 if "carrito" not in st.session_state:
     st.session_state.carrito = []
 
-# --- FUNCIÓN GENERADORA DE PDF ---
-def generar_pdf_comprobante(
-    tipo_doc,
-    serie_num,
-    cliente_nom,
-    cliente_doc,
-    carrito,
-    subtotal,
-    igv,
-    total_gen,
-    doc_referencia="",
-    motivo="",
-):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30,
-    )
-    story = []
-    styles = getSampleStyleSheet()
-
-    titulo_style = ParagraphStyle(
-        "Titulo", parent=styles["Heading1"], alignment=1, fontSize=16, leading=20, fontName="Helvetica-Bold"
-    )
-    subtitulo_style = ParagraphStyle("SubTitulo", parent=styles["Normal"], alignment=1, fontSize=10, leading=12)
-    comprobante_style = ParagraphStyle(
-        "Comp", parent=styles["Heading2"], alignment=1, fontSize=12, leading=15, fontName="Helvetica-Bold"
-    )
-    normal_style = styles["Normal"]
-    derecha_style = ParagraphStyle("Derecha", parent=styles["Normal"], alignment=2)
-    bold_derecha = ParagraphStyle("BoldDerecha", parent=styles["Normal"], alignment=2, fontName="Helvetica-Bold")
-
-    story.append(Paragraph("JHANEGSOL S.A.C.", titulo_style))
-    story.append(Paragraph("RUC: 20600000001", subtitulo_style))
-    story.append(Paragraph("Oficina Principal - Huacho, Lima - Perú", subtitulo_style))
-    story.append(Spacer(1, 15))
-
-    story.append(Paragraph(f"<b>{tipo_doc}</b>", comprobante_style))
-    story.append(Paragraph(f"<b>N° {serie_num}</b>", comprobante_style))
-    story.append(Spacer(1, 10))
-
-    datos_cliente = [
-        [Paragraph(f"<b>Cliente:</b> {cliente_nom}", normal_style)],
-        [Paragraph(f"<b>DNI / RUC:</b> {cliente_doc}", normal_style)],
-        [Paragraph(f"<b>Fecha de Emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", normal_style)],
-    ]
-    
-    if doc_referencia:
-        datos_cliente.append([Paragraph(f"<b>Comprobante Afectado:</b> {doc_referencia}", normal_style)])
-    if motivo:
-        datos_cliente.append([Paragraph(f"<b>Motivo / Concepto:</b> {motivo}", normal_style)])
-
-    story.append(Table(datos_cliente, colWidths=[500]))
-    story.append(Spacer(1, 15))
-
-    data_tabla = [[
-        Paragraph("<b>Cant.</b>", normal_style),
-        Paragraph("<b>Descripción</b>", normal_style),
-        Paragraph("<b>P. Unit (S/.)</b>", derecha_style),
-        Paragraph("<b>Subtotal (S/.)</b>", derecha_style),
-    ]]
-
-    for item in carrito:
-        data_tabla.append([
-            Paragraph(str(item["cantidad"]), normal_style),
-            Paragraph(item["descripcion"], normal_style),
-            Paragraph(f"{item['precio_unitario']:.2f}", derecha_style),
-            Paragraph(f"{item['subtotal']:.2f}", derecha_style),
-        ])
-
-    tabla_prod = Table(data_tabla, colWidths=[50, 270, 90, 90])
-    tabla_prod.setStyle(
-        TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f2f5")),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-            ("TOPPADDING", (0, 0), (-1, -1), 6),
-            ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
-            ("LINEABOVE", (0, 0), (-1, 0), 1, colors.black),
-            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
-        ])
-    )
-    story.append(tabla_prod)
-    story.append(Spacer(1, 15))
-
-    data_totales = [
-        [Paragraph("Op. Gravada:", derecha_style), Paragraph(f"S/. {subtotal:.2f}", derecha_style)],
-        [Paragraph("IGV (18%):", derecha_style), Paragraph(f"S/. {igv:.2f}", derecha_style)],
-        [Paragraph("<b>TOTAL:</b>", bold_derecha), Paragraph(f"<b>S/. {total_gen:.2f}</b>", bold_derecha)],
-    ]
-    tabla_totales = Table(data_totales, colWidths=[400, 100])
-    tabla_totales.setStyle(TableStyle([("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 4)]))
-    story.append(tabla_totales)
-    story.append(Spacer(1, 20))
-
-    story.append(Paragraph("¡Gracias por su preferencia en JHANEGSOL S.A.C.!", subtitulo_style))
-
-    doc.build(story)
-    buffer.seek(0)
-    return buffer
-
 # --- INTERFAZ PRINCIPAL ---
 st.title("📦 Sistema Comercial, Inventarios y Facturación - Jhanegsol")
 
@@ -187,7 +83,7 @@ menu = st.sidebar.radio(
         "📥 Ingresos (Compras / Entrada)",
         "🧾 Ventas y Emisión de Comprobantes",
         "📊 Histórico de Comprobantes",
-        "📈 Estadísticas y Cuadro de Devoluciones",
+        "📈 Estadísticas y Métricas de Negocio",
     ],
 )
 
@@ -208,7 +104,7 @@ if menu == "📋 Catálogo de Productos":
                 costo = st.number_input("Costo (S/.)", min_value=0.0, format="%.2f")
                 precio = st.number_input("Precio Venta (S/.)", min_value=0.0, format="%.2f")
                 stock = st.number_input("Stock Inicial", min_value=0, value=0)
-                stock_min = st.number_input("Stock Mínimo Alerta", min_value=1, value=5)
+                stock_min = st.number_input("Stock Mínimo (Alerta de Quiebre)", min_value=1, value=5)
 
             if st.form_submit_button("Guardar Producto"):
                 if codigo and descripcion:
@@ -225,8 +121,6 @@ if menu == "📋 Catálogo de Productos":
                     if res:
                         st.success("✅ Producto registrado exitosamente.")
                         st.rerun()
-                else:
-                    st.error("⚠️ El código y la descripción son requeridos.")
 
     prod_data = ejecutar_consulta("productos")
     if prod_data:
@@ -292,7 +186,7 @@ elif menu == "👥 Listado y Gestión de Clientes":
         st.dataframe(pd.DataFrame(res_clientes), use_container_width=True)
 
 # -------------------------------------------------------------------
-# 4. INGRESOS DE COMPRAS
+# 4. INGRESOS (COMPRAS)
 # -------------------------------------------------------------------
 elif menu == "📥 Ingresos (Compras / Entrada)":
     st.header("📥 Registro de Ingresos de Mercadería (Compras)")
@@ -412,7 +306,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
             motivo_nota = st.text_area("Detalle / Observaciones de la Devolución *")
 
         elif "NOTA DE DÉBITO" in tipo_doc:
-            st.info("ℹ️ Emitida para aumentar el monto de una factura/boleta previa (gastos adicionales, intereses o mora sin modificar el stock).")
+            st.info("ℹ️ Emitida para aumentar el monto de una factura/boleta previa (intereses, mora o ajuste sin afectar stock).")
             doc_ref = st.text_input("N° de Factura/Boleta que modifica *", placeholder="Ej: F001-000005")
             cat_motivo = st.selectbox(
                 "Motivo de la Nota de Débito *",
@@ -523,7 +417,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                             ejecutar_consulta("devoluciones", "insert", reg_dev)
 
                         elif "NOTA DE DÉBITO" in tipo_doc:
-                            # Solo incrementa el cobro tributario, no afecta existencias
+                            # Ajuste de cobro, no altera el stock físico
                             pass
 
                         else:
@@ -548,34 +442,107 @@ elif menu == "📊 Histórico de Comprobantes":
         st.dataframe(pd.DataFrame(comps), use_container_width=True)
 
 # -------------------------------------------------------------------
-# 7. ESTADÍSTICAS Y CUADRO DE DEVOLUCIONES
+# 7. ESTADÍSTICAS Y MÉTRICAS DE NEGOCIO (INCLUYE TODAS TUS ESTADÍSTICAS)
 # -------------------------------------------------------------------
-elif menu == "📈 Estadísticas y Cuadro de Devoluciones":
-    st.header("📈 Panel Estadístico y Cuadro de Devoluciones")
+elif menu == "📈 Estadísticas y Métricas de Negocio":
+    st.header("📈 Panel Consolidado de Estadísticas e Inteligencia")
 
-    st.subheader("📋 Registro Consolidado de Devoluciones (Notas de Crédito)")
-    devs = ejecutar_consulta("devoluciones")
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "⚠️ Alerta de Quiebre de Stock",
+        "🔥 Productos con Más Salida",
+        "🏷️ Mejor Proveedor (Menor Precio)",
+        "🔄 Cuadro Estadístico de Devoluciones"
+    ])
 
-    if devs:
-        df_devs = pd.DataFrame(devs)
-        st.dataframe(df_devs, use_container_width=True)
+    # --- TAB 1: AVISO / QUIEBRE DE STOCK ---
+    with tab1:
+        st.subheader("🚨 Control de Agotamiento y Stock Mínimo")
+        prods_stk = ejecutar_consulta("productos")
 
-        st.divider()
-        st.subheader("📊 Gráficos Estadísticos de Motivos")
+        if prods_stk:
+            df_stk = pd.DataFrame(prods_stk)
+            # Productos por debajo o igual al stock mínimo
+            df_criticos = df_stk[df_stk["stock"] <= df_stk["stock_minimo"]]
 
-        col_g1, col_g2 = st.columns(2)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total Productos en Catálogo", len(df_stk))
+            m2.metric("En Alerta de Stock Mínimo", len(df_criticos), delta_color="inverse")
+            m3.metric("Productos Sin Stock (0)", len(df_stk[df_stk["stock"] == 0]))
 
-        with col_g1:
-            st.markdown("**Cantidad de Productos Devueltos por Motivo**")
-            if "motivo_devolucion" in df_devs.columns and "cantidad" in df_devs.columns:
-                chart_data = df_devs.groupby("motivo_devolucion")["cantidad"].sum()
-                st.bar_chart(chart_data)
+            if not df_criticos.empty:
+                st.error("⚠️ Atención: Los siguientes productos requieren reabastecimiento urgente:")
+                st.dataframe(
+                    df_criticos[["codigo", "marca", "descripcion", "stock", "stock_minimo"]],
+                    use_container_width=True
+                )
+            else:
+                st.success("✅ Todos los productos se encuentran por encima del nivel de stock mínimo.")
 
-        with col_g2:
-            st.markdown("**Resumen de Impacto Económico**")
-            if "precio" in df_devs.columns and "cantidad" in df_devs.columns:
-                df_devs["total_devolucion"] = df_devs["precio"] * df_devs["cantidad"]
-                total_devuelto = df_devs["total_devolucion"].sum()
-                st.metric("Total Ajustado / Anulado en Ventas", f"S/. {total_devuelto:.2f}")
-    else:
-        st.info("No hay devoluciones registradas con Nota de Crédito.")
+    # --- TAB 2: PRODUCTOS CON MÁS SALIDA ---
+    with tab2:
+        st.subheader("🔥 Top Productos Más Vendidos")
+        detalles = ejecutar_consulta("detalle_comprobante")
+        prods_ref = ejecutar_consulta("productos")
+
+        if detalles and prods_ref:
+            df_det = pd.DataFrame(detalles)
+            df_p = pd.DataFrame(prods_ref)
+
+            # Unir para obtener descripción
+            df_m = df_det.merge(df_p, left_on="producto_id", right_on="id", suffixes=("_det", "_prod"))
+            top_prod = df_m.groupby("descripcion")["cantidad"].sum().reset_index()
+            top_prod = top_prod.sort_values(by="cantidad", ascending=False).head(10)
+
+            st.bar_chart(data=top_prod, x="descripcion", y="cantidad")
+            st.dataframe(top_prod.rename(columns={"descripcion": "Producto", "cantidad": "Unidades Vendidas"}), use_container_width=True)
+        else:
+            st.info("Aún no existen ventas registradas para calcular rotación.")
+
+    # --- TAB 3: MEJOR PROVEEDOR POR MENOR PRECIO ---
+    with tab3:
+        st.subheader("🏷️ Análisis de Proveedores con Menor Costo")
+        provs = ejecutar_consulta("proveedores")
+        prods_costo = ejecutar_consulta("productos")
+
+        if prods_costo and provs:
+            df_pr = pd.DataFrame(prods_costo)
+            df_pv = pd.DataFrame(provs)
+
+            # Promedio de costo por marca o proveedor
+            st.markdown("**Comparativa de Costo Promedio por Marca/Proveedor Registrado:**")
+            costo_marca = df_pr.groupby("marca")["costo"].mean().reset_index()
+            costo_marca = costo_marca.sort_values(by="costo", ascending=True)
+
+            st.dataframe(
+                costo_marca.rename(columns={"marca": "Marca / Proveedor", "costo": "Costo Promedio (S/.)"}),
+                use_container_width=True
+            )
+        else:
+            st.info("Registra proveedores y costos de productos para visualizar esta comparativa.")
+
+    # --- TAB 4: CUADRO ESTADÍSTICO DE DEVOLUCIONES ---
+    with tab4:
+        st.subheader("📋 Control Estadístico de Devoluciones y Mermas (Notas de Crédito)")
+        devs = ejecutar_consulta("devoluciones")
+
+        if devs:
+            df_devs = pd.DataFrame(devs)
+            st.dataframe(df_devs, use_container_width=True)
+
+            st.divider()
+            c_g1, c_g2 = st.columns(2)
+
+            with c_g1:
+                st.markdown("**Distribución por Motivo de Devolución**")
+                if "motivo_devolucion" in df_devs.columns and "cantidad" in df_devs.columns:
+                    chart_data = df_devs.groupby("motivo_devolucion")["cantidad"].sum()
+                    st.bar_chart(chart_data)
+
+            with c_g2:
+                st.markdown("**Impacto Económico Total**")
+                if "precio" in df_devs.columns and "cantidad" in df_devs.columns:
+                    df_devs["total_devuelto"] = df_devs["precio"] * df_devs["cantidad"]
+                    monto_dev = df_devs["total_devuelto"].sum()
+                    st.metric("Total Anulado / Devuelto a Clientes", f"S/. {monto_dev:.2f}")
+        else:
+            st.info("No hay devoluciones ni Notas de Crédito registradas hasta el momento.")
