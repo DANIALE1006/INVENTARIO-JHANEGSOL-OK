@@ -296,7 +296,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                 else:
                     st.error("⚠️ La cantidad supera el stock disponible.")
 
-    # 4. Vista previa del Comprobante
+# 4. Vista previa del Comprobante
     if st.session_state.carrito:
         st.subheader("📋 Detalle del Comprobante a Emitir")
         df_car = pd.DataFrame(st.session_state.carrito)
@@ -328,27 +328,39 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     "igv": igv,
                     "total": total_gen
                 }
-                res = supabase.table("comprobantes").insert(comp_data).execute()
-                comp_id = res.data[0]['id']
+                
+                try:
+                    # Intento de inserción en Supabase
+                    res = supabase.table("comprobantes").insert(comp_data).execute()
+                    
+                    if res.data:
+                        comp_id = res.data[0]['id']
 
-                for item in st.session_state.carrito:
-                    det = {
-                        "comprobante_id": comp_id,
-                        "producto_id": item['id'],
-                        "cantidad": item['cantidad'],
-                        "precio_unitario": item['precio_unitario']
-                    }
-                    supabase.table("detalle_comprobante").insert(det).execute()
+                        # Guardar detalle de productos
+                        for item in st.session_state.carrito:
+                            det = {
+                                "comprobante_id": comp_id,
+                                "producto_id": item['id'],
+                                "cantidad": item['cantidad'],
+                                "precio_unitario": item['precio_unitario']
+                            }
+                            supabase.table("detalle_comprobante").insert(det).execute()
 
-                    prod_bd = supabase.table("productos").select("stock").eq("id", item['id']).execute().data[0]
-                    nuevo_stk = prod_bd['stock'] - item['cantidad']
-                    supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
+                            # Descontar del inventario
+                            prod_bd = supabase.table("productos").select("stock").eq("id", item['id']).execute().data[0]
+                            nuevo_stk = prod_bd['stock'] - item['cantidad']
+                            supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
 
-                st.balloons()
-                st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito! Stock descontado.")
-                st.session_state.carrito = []
-                st.rerun()
-
+                        st.balloons()
+                        st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito! Stock descontado.")
+                        st.session_state.carrito = []
+                        st.rerun()
+                    else:
+                        st.error("⚠️ La base de datos no devolvió respuesta al guardar el comprobante.")
+                        
+                except Exception as e:
+                    # Atrapa el error y lo muestra claramente en pantalla
+                    st.error(f"❌ Error al guardar en la base de datos: {str(e)}")
 # -------------------------------------------------------------------
 # 6. DEVOLUCIONES
 # -------------------------------------------------------------------
