@@ -178,6 +178,8 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
     else:
         st.warning("⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor registrados.")
 
+import io
+
 # -------------------------------------------------------------------
 # 5. VENTAS Y EMISIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
@@ -273,7 +275,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
             prefijo = "B001"
 
         try:
-            # Consulta para obtener el último correlativo registrado con ese prefijo
             ult_comp = supabase.table("comprobantes")\
                 .select("serie_numero")\
                 .like("serie_numero", f"{prefijo}-%")\
@@ -353,56 +354,74 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
             </tr>
             """
 
-        html_preview = f"""
-        <div id="ticket-print" style="max-width: 400px; margin: 0 auto; padding: 20px; border: 2px dashed #333; background-color: #ffffff; color: #000000; font-family: 'Courier New', Courier, monospace; font-size: 13px;">
-            <div style="text-align: center; margin-bottom: 10px;">
-                <h3 style="margin: 0; font-size: 18px; color: #000;">MI EMPRESA S.A.C.</h3>
-                <p style="margin: 2px 0;">RUC: 20123456789</p>
-                <p style="margin: 2px 0;">Av. Principal #123 - Lima</p>
-                <p style="margin: 2px 0;">Teléfono: (01) 555-4321</p>
-                <hr style="border: top 1px dashed #000; margin: 8px 0;">
-                <h4 style="margin: 5px 0; font-size: 15px; color: #000;">{tipo_doc}</h4>
-                <p style="margin: 2px 0; font-weight: bold; font-size: 14px;">N° {serie_num}</p>
-            </div>
-            <div style="margin-bottom: 10px;">
-                <p style="margin: 2px 0;"><strong>Cliente:</strong> {cliente_nom}</p>
-                <p style="margin: 2px 0;"><strong>DNI/RUC:</strong> {cliente_doc}</p>
-            </div>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 12px;">
-                <thead>
-                    <tr style="border-bottom: 1px solid #000; border-top: 1px solid #000;">
-                        <th style="text-align: center; padding: 4px;">CANT</th>
-                        <th style="text-align: left; padding: 4px;">DESCRIPCIÓN</th>
-                        <th style="text-align: right; padding: 4px;">P.U.</th>
-                        <th style="text-align: right; padding: 4px;">TOTAL</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {filas_html}
-                </tbody>
-            </table>
-            <div style="text-align: right; margin-top: 10px; border-top: 1px solid #000; padding-top: 5px;">
-                <p style="margin: 2px 0;"><strong>OP. GRAVADA:</strong> S/. {subtotal:.2f}</p>
-                <p style="margin: 2px 0;"><strong>IGV (18%):</strong> S/. {igv:.2f}</p>
-                <p style="margin: 4px 0; font-size: 15px;"><strong>TOTAL A PAGAR: S/. {total_gen:.2f}</strong></p>
-            </div>
-            <div style="text-align: center; margin-top: 15px; font-size: 11px;">
-                <p style="margin: 2px 0;">¡Gracias por su compra!</p>
-            </div>
+        html_preview = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{tipo_doc} {serie_num}</title>
+</head>
+<body style="background-color: #f0f2f5; font-family: 'Courier New', Courier, monospace; margin: 0; padding: 10px;">
+    <div id="ticket-print" style="max-width: 380px; margin: 0 auto; padding: 20px; border: 2px dashed #333; background-color: #ffffff; color: #000000; font-size: 13px;">
+        <div style="text-align: center; margin-bottom: 10px;">
+            <h3 style="margin: 0; font-size: 18px; color: #000;">JHANEGSOL S.A.C.</h3>
+            <p style="margin: 2px 0;">RUC: 20600000001</p>
+            <p style="margin: 2px 0;">Oficina Principal - Huacho, Lima - Perú</p>
+            <hr style="border-top: 1px dashed #000; margin: 8px 0;">
+            <h4 style="margin: 5px 0; font-size: 15px; color: #000;">{tipo_doc}</h4>
+            <p style="margin: 2px 0; font-weight: bold; font-size: 14px;">N° {serie_num}</p>
         </div>
-        """
+        <div style="margin-bottom: 10px;">
+            <p style="margin: 2px 0;"><strong>Cliente:</strong> {cliente_nom}</p>
+            <p style="margin: 2px 0;"><strong>DNI/RUC:</strong> {cliente_doc}</p>
+        </div>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 12px;">
+            <thead>
+                <tr style="border-bottom: 1px solid #000; border-top: 1px solid #000;">
+                    <th style="text-align: center; padding: 4px;">CANT</th>
+                    <th style="text-align: left; padding: 4px;">DESCRIPCIÓN</th>
+                    <th style="text-align: right; padding: 4px;">P.U.</th>
+                    <th style="text-align: right; padding: 4px;">TOTAL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {filas_html}
+            </tbody>
+        </table>
+        <div style="text-align: right; margin-top: 10px; border-top: 1px solid #000; padding-top: 5px;">
+            <p style="margin: 2px 0;"><strong>OP. GRAVADA:</strong> S/. {subtotal:.2f}</p>
+            <p style="margin: 2px 0;"><strong>IGV (18%):</strong> S/. {igv:.2f}</p>
+            <p style="margin: 4px 0; font-size: 15px;"><strong>TOTAL A PAGAR: S/. {total_gen:.2f}</strong></p>
+        </div>
+        <div style="text-align: center; margin-top: 15px; font-size: 11px;">
+            <p style="margin: 2px 0;">¡Gracias por su compra en JHANEGSOL S.A.C.!</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
-        # Renderizar la vista previa del comprobante en Streamlit
+        # Renderizar la vista previa visual
         st.components.v1.html(html_preview, height=450, scrolling=True)
 
         # Botones de Acción
-        b_col1, b_col2 = st.columns(2)
+        b_col1, b_col2, b_col3 = st.columns(3)
+        
         with b_col1:
             if st.button("🔴 Vaciar Selección", use_container_width=True):
                 st.session_state.carrito = []
                 st.rerun()
 
         with b_col2:
+            # Botón para descargar el Comprobante/Ticket en formato HTML (para imprimir o guardar)
+            st.download_button(
+                label="📥 DESCARGAR COMPROBANTE (HTML)",
+                data=html_preview,
+                file_name=f"Comprobante_{tipo_doc.replace(' ', '_')}_{serie_num}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+
+        with b_col3:
             if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK", type="primary", use_container_width=True):
                 try:
                     # Validar e incrementar automáticamente si la serie y número ya existen
@@ -456,7 +475,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                             supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
 
                         st.balloons()
-                        st.success(f"🎉 ¡{tipo_doc} {correlativo_final} emitida con éxito! Stock actualizado.")
+                        st.success(f"🎉 ¡{tipo_doc} {correlativo_final} emitida con éxito para JHANEGSOL S.A.C.!")
                         st.session_state.carrito = []
                         st.rerun()
                     else:
