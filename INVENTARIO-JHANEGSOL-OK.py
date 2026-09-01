@@ -441,7 +441,6 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
             "⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor"
             " registrados en el sistema."
         )
-
 # -------------------------------------------------------------------
 # 5. VENTAS Y EMISIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
@@ -538,25 +537,29 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         else:
             prefijo = "B001"
 
-        ult_comp = ejecutar_consulta(
+        # --- LÓGICA CORREGIDA PARA CÁLCULO DE CORRELATIVO ---
+        ult_comps = ejecutar_consulta(
             "comprobantes",
             consulta_type="select",
             data="serie_numero",
             like_col="serie_numero",
             like_val=f"{prefijo}-%",
-            order_col="id",
-            desc=True,
-            limit=1,
         )
 
-        if ult_comp:
-            try:
-                ultimo_num = int(ult_comp[0]["serie_numero"].split("-")[1])
-                siguiente_num = ultimo_num + 1
-            except Exception:
-                siguiente_num = 1
-        else:
-            siguiente_num = 1
+        siguiente_num = 1
+        if ult_comps:
+            numeros = []
+            for c in ult_comps:
+                val = c.get("serie_numero", "")
+                if "-" in val:
+                    try:
+                        # Extrae la parte numérica tras el guión (ej: "B001-000003" -> 3)
+                        num = int(val.split("-")[1])
+                        numeros.append(num)
+                    except ValueError:
+                        pass
+            if numeros:
+                siguiente_num = max(numeros) + 1
 
         sugerido = f"{prefijo}-{siguiente_num:06d}"
         serie_num = st.text_input("Serie y Número Comprobante", value=sugerido)
@@ -702,7 +705,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito!")
                     st.session_state.carrito = []
                     st.rerun()
-
 # -------------------------------------------------------------------
 # 6. DEVOLUCIONES
 # -------------------------------------------------------------------
