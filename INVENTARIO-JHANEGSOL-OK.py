@@ -1,11 +1,12 @@
 import streamlit as st
+import pandas as pd
+from datetime import datetime, timedelta
 from supabase import create_client, Client
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema Jhanesgol", layout="wide", page_icon="📦")
+st.set_page_config(page_title="Sistema Jhanegsol - Facturación e Inventarios", layout="wide", page_icon="📦")
 
 # --- CONEXIÓN A SUPABASE ---
-# ⚠️ REEMPLAZA ESTOS VALORES CON TUS CLAVES REALES DE SUPABASE:
 SUPABASE_URL = "https://oqafvzwwooxkohkdmatv.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
 
@@ -15,66 +16,80 @@ def init_supabase() -> Client:
 
 supabase = init_supabase()
 
-st.title("📦 Sistema de Gestión: Inventario y Ventas - Jhanesgol")
+# --- ESTADO DE SESIÓN ---
+if "carrito" not in st.session_state:
+    st.session_state.carrito = []
 
-# --- MENÚ DE NAVEGACIÓN ---
+st.title("📦 Sistema Comercial, Inventarios y Facturación - Jhanesgol")
+
+# --- MENÚ PRINCIPAL ---
 menu = st.sidebar.radio(
     "Menú Principal",
-    ["📋 Productos / Catálogo", "🏢 Proveedores", "📥 Ingresos (Compras)", "🔄 Devoluciones", "🧾 Ventas (Facturación)", "📊 Estadísticas"]
+    [
+        "📋 Catálogo de Productos", 
+        "🏢 Proveedores", 
+        "👥 Listado y Gestión de Clientes",
+        "📥 Ingresos (Compras / Entrada)", 
+        "🧾 Ventas y Emisión de Comprobantes", 
+        "🔄 Devoluciones", 
+        "📊 Histórico de Comprobantes",
+        "📈 Estadísticas, Alertas y Reportes"
+    ]
 )
 
 # -------------------------------------------------------------------
-# 1. MÓDULO DE PRODUCTOS / CATÁLOGO
+# 1. CATÁLOGO DE PRODUCTOS
 # -------------------------------------------------------------------
-if menu == "📋 Productos / Catálogo":
-    st.header("📋 Catálogo de Productos")
+if menu == "📋 Catálogo de Productos":
+    st.header("📋 Catálogo de Productos e Inventario")
     
-    with st.expander("➕ Registrar Nuevo Producto"):
+    with st.expander("➕ Registrar Nuevo Producto", expanded=False):
         with st.form("form_prod", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
-                codigo = st.text_input("Código Único *")
+                codigo = st.text_input("Código *")
                 marca = st.text_input("Marca")
                 descripcion = st.text_area("Descripción *")
             with col2:
-                costo = st.number_input("Costo (S/.)", min_value=0.0, step=0.5, format="%.2f")
-                precio = st.number_input("Precio de Venta (S/.)", min_value=0.0, step=0.5, format="%.2f")
-                stock_min = st.number_input("Stock Mínimo para Alerta", min_value=1, value=5)
+                costo = st.number_input("Costo (S/.)", min_value=0.0, format="%.2f")
+                precio = st.number_input("Precio Venta (S/.)", min_value=0.0, format="%.2f")
+                stock = st.number_input("Stock Inicial", min_value=0, value=0)
+                stock_min = st.number_input("Stock Mínimo Alerta", min_value=1, value=5)
             
-            btn_guardar = st.form_submit_button("Guardar Producto")
-            if btn_guardar:
+            if st.form_submit_button("Guardar Producto"):
                 if codigo and descripcion:
                     data = {
                         "codigo": codigo, "marca": marca, "descripcion": descripcion,
-                        "costo": costo, "precio": precio, "stock_minimo": stock_min
+                        "costo": costo, "precio": precio, "stock": stock, "stock_minimo": stock_min
                     }
                     supabase.table("productos").insert(data).execute()
                     st.success("✅ Producto registrado exitosamente.")
                     st.rerun()
                 else:
-                    st.error("⚠️ El código y la descripción son obligatorios.")
+                    st.error("⚠️ El código y la descripción son requeridos.")
 
-    # Tabla de productos
-    st.subheader("Inventario en Tiempo Real")
-    prod_data = supabase.table("productos").select("*").execute()
-    if prod_data.data:
-        st.dataframe(prod_data.data, use_container_width=True)
-    else:
-        st.info("No hay productos registrados aún.")
+    # Búsqueda interactiva
+    prod_data = supabase.table("productos").select("*").execute().data
+    if prod_data:
+        df_prod = pd.DataFrame(prod_data)
+        busqueda = st.text_input("🔍 Buscar por código, marca o descripción:")
+        if busqueda:
+            df_prod = df_prod[df_prod.apply(lambda r: busqueda.lower() in str(r).lower(), axis=1)]
+        st.dataframe(df_prod, use_container_width=True)
 
 # -------------------------------------------------------------------
-# 2. MÓDULO DE PROVEEDORES
+# 2. PROVEEDORES
 # -------------------------------------------------------------------
 elif menu == "🏢 Proveedores":
-    st.header("🏢 Registro de Proveedores")
+    st.header("🏢 Registro y Directorio de Proveedores")
     
     with st.form("form_prov", clear_on_submit=True):
         nombre = st.text_input("Nombre / Razón Social *")
-        col1, col2 = st.columns(2)
-        with col1:
+        c1, c2 = st.columns(2)
+        with c1:
             ruc = st.text_input("RUC / DNI")
             telefono = st.text_input("Teléfono")
-        with col2:
+        with c2:
             email = st.text_input("Email")
         
         if st.form_submit_button("Guardar Proveedor"):
@@ -83,57 +98,272 @@ elif menu == "🏢 Proveedores":
                 st.success("✅ Proveedor registrado.")
                 st.rerun()
 
-    prov_data = supabase.table("proveedores").select("*").execute()
-    if prov_data.data:
-        st.dataframe(prov_data.data, use_container_width=True)
+    prov_data = supabase.table("proveedores").select("*").execute().data
+    if prov_data:
+        st.dataframe(pd.DataFrame(prov_data), use_container_width=True)
 
 # -------------------------------------------------------------------
-# 3. MÓDULO DE INGRESOS (COMPRAS)
+# 3. LISTADO Y GESTIÓN DE CLIENTES
 # -------------------------------------------------------------------
-elif menu == "📥 Ingresos (Compras)":
-    st.header("📥 Registrar Ingreso de Compras")
+elif menu == "👥 Listado y Gestión de Clientes":
+    st.header("👥 Base de Datos y Registro de Clientes")
     
-    prods = supabase.table("productos").select("id, codigo, descripcion, costo").execute().data
+    with st.expander("➕ Registrar Nuevo Cliente", expanded=False):
+        with st.form("form_cli_dir", clear_on_submit=True):
+            cli_nom = st.text_input("Nombre o Razón Social del Cliente *")
+            c1, c2 = st.columns(2)
+            with c1:
+                cli_doc = st.text_input("DNI / RUC *")
+                cli_tel = st.text_input("Teléfono")
+            with c2:
+                cli_dir = st.text_input("Dirección")
+            
+            if st.form_submit_button("Guardar Cliente"):
+                if cli_nom and cli_doc:
+                    supabase.table("clientes").insert({
+                        "nombre": cli_nom.upper(),
+                        "ruc_dni": cli_doc,
+                        "telefono": cli_tel,
+                        "direccion": cli_dir
+                    }).execute()
+                    st.success(f"✅ Cliente {cli_nom.upper()} registrado con éxito.")
+                    st.rerun()
+                else:
+                    st.error("⚠️ El Nombre y el DNI/RUC son campos obligatorios.")
+
+    res_clientes = supabase.table("clientes").select("*").execute().data
+    if res_clientes:
+        df_clientes = pd.DataFrame(res_clientes)
+        busqueda_c = st.text_input("🔍 Buscar cliente por Nombre o DNI/RUC:")
+        if busqueda_c:
+            df_clientes = df_clientes[df_clientes.apply(lambda r: busqueda_c.lower() in str(r).lower(), axis=1)]
+        st.dataframe(df_clientes[["id", "nombre", "ruc_dni", "telefono", "direccion"]], use_container_width=True)
+    else:
+        st.info("No hay clientes registrados en la base de datos.")
+
+# -------------------------------------------------------------------
+# 4. INGRESOS (COMPRAS / ENTRADA DE STOCK)
+# -------------------------------------------------------------------
+elif menu == "📥 Ingresos (Compras / Entrada)":
+    st.header("📥 Registro de Ingresos de Mercadería (Compras)")
+    st.info("Registra las guías de compra de proveedores para aumentar el stock de tu inventario automáticamente.")
+
+    prods = supabase.table("productos").select("id, codigo, descripcion, stock, costo").execute().data
     provs = supabase.table("proveedores").select("id, nombre").execute().data
 
     if prods and provs:
-        dict_prods = {f"{p['codigo']} - {p['descripcion']}": p for p in prods}
+        dict_prods = {f"{p['codigo']} - {p['descripcion']} (Stock actual: {p['stock']})": p for p in prods}
         dict_provs = {pr['nombre']: pr['id'] for pr in provs}
 
-        with st.form("form_compras", clear_on_submit=True):
-            nro_boleta = st.text_input("Número de Boleta / Factura de Compra *")
-            prod_sel = st.selectbox("Seleccionar Producto", list(dict_prods.keys()))
-            prov_sel = st.selectbox("Seleccionar Proveedor", list(dict_provs.keys()))
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                cantidad = st.number_input("Cantidad Comprada", min_value=1, value=1)
-            with col2:
-                costo_unit = st.number_input("Costo Unitario (S/.)", value=float(dict_prods[prod_sel]['costo']))
-            
-            total_compra = cantidad * costo_unit
-            st.markdown(f"**Total Compra:** S/. {total_compra:.2f}")
+        with st.form("form_ingresos", clear_on_submit=True):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                prov_sel = st.selectbox("Proveedor", list(dict_provs.keys()))
+                nro_fact_compra = st.text_input("N° Factura/Guía de Compra", value="F001-0001")
+            with c2:
+                prod_sel = st.selectbox("Producto a Ingresar", list(dict_prods.keys()))
+                cant_ingreso = st.number_input("Cantidad que Ingresa", min_value=1, value=1)
+            with c3:
+                nuevo_costo = st.number_input("Costo Unitario Compra (S/.)", min_value=0.0, value=float(dict_prods[prod_sel]['costo']))
+                fecha_compra = st.date_input("Fecha de Ingreso", datetime.now())
 
-            if st.form_submit_button("Registrar Ingreso"):
-                compra = {
-                    "numero_boleta": nro_boleta,
-                    "producto_id": dict_prods[prod_sel]['id'],
-                    "proveedor_id": dict_provs[prov_sel],
-                    "cantidad": cantidad,
-                    "costo": costo_unit
-                }
-                supabase.table("compras").insert(compra).execute()
-                st.success("✅ Ingreso registrado. El stock del producto ha aumentado automáticamente.")
+            if st.form_submit_button("📥 Registrar Ingreso y Aumentar Stock"):
+                prod_info = dict_prods[prod_sel]
+                nuevo_stock = prod_info['stock'] + cant_ingreso
+                
+                # Actualizar stock en BD
+                supabase.table("productos").update({"stock": nuevo_stock, "costo": nuevo_costo}).eq("id", prod_info['id']).execute()
+                st.success(f"✅ Stock actualizado. Nuevo Stock de '{prod_info['descripcion']}': {nuevo_stock}")
                 st.rerun()
     else:
-        st.warning("⚠️ Debes registrar al menos un producto y un proveedor primero.")
+        st.warning("⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor registrados.")
 
 # -------------------------------------------------------------------
-# 4. MÓDULO DE DEVOLUCIONES
+# 5. VENTAS Y EMISIÓN DE COMPROBANTES
+# -------------------------------------------------------------------
+elif menu == "🧾 Ventas y Emisión de Comprobantes":
+    st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Tickets")
+
+    # 1. Selección o Creación de Cliente
+    st.subheader("👤 Seleccionar o Registrar Cliente")
+    res_clientes_v = supabase.table("clientes").select("*").execute().data
+    df_cli_v = pd.DataFrame(res_clientes_v) if res_clientes_v else pd.DataFrame()
+
+    opcion_cliente = st.radio(
+        "Tipo de Cliente", 
+        ["Cliente Genérico (Varios)", "Seleccionar Cliente Registrado", "➕ Registrar Nuevo Cliente"],
+        horizontal=True
+    )
+
+    cliente_nom = "CLIENTE VARIOS"
+    cliente_doc = "00000000"
+
+    if opcion_cliente == "Cliente Genérico (Varios)":
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            st.text_input("Nombre / Razón Social", value=cliente_nom, disabled=True)
+        with col_c2:
+            st.text_input("DNI / RUC", value=cliente_doc, disabled=True)
+
+    elif opcion_cliente == "Seleccionar Cliente Registrado":
+        if not df_cli_v.empty:
+            df_frec = df_cli_v[df_cli_v["ruc_dni"] != "00000000"]
+            lista_nombres = df_frec["nombre"].tolist() if not df_frec.empty else df_cli_v["nombre"].tolist()
+            
+            cliente_sel = st.selectbox("Buscar Cliente Frecuente", lista_nombres)
+            datos_c = df_cli_v[df_cli_v["nombre"] == cliente_sel].iloc[0]
+            cliente_nom = datos_c["nombre"]
+            cliente_doc = datos_c["ruc_dni"]
+
+            col_c1, col_c2 = st.columns(2)
+            with col_c1:
+                st.text_input("Nombre / Razón Social", value=cliente_nom, disabled=True)
+            with col_c2:
+                st.text_input("DNI / RUC", value=cliente_doc, disabled=True)
+        else:
+            st.warning("No hay clientes registrados en la BD. Usa la opción 'Registrar Nuevo Cliente'.")
+
+    elif opcion_cliente == "➕ Registrar Nuevo Cliente":
+        st.info("Ingresa los datos para registrarlo y usarlo en este comprobante:")
+        with st.form("form_cli_rapido_venta"):
+            col1, col2 = st.columns(2)
+            with col1:
+                nuevo_nom = st.text_input("Nombre / Razón Social *")
+                nuevo_tel = st.text_input("Teléfono")
+            with col2:
+                nuevo_doc = st.text_input("DNI / RUC *")
+                nueva_dir = st.text_input("Dirección")
+            
+            if st.form_submit_button("Guardar y Aplicar Cliente"):
+                if nuevo_nom and nuevo_doc:
+                    supabase.table("clientes").insert({
+                        "nombre": nuevo_nom.upper(),
+                        "ruc_dni": nuevo_doc,
+                        "telefono": nuevo_tel,
+                        "direccion": nueva_dir
+                    }).execute()
+                    st.success(f"✅ Cliente {nuevo_nom.upper()} registrado.")
+                    cliente_nom = nuevo_nom.upper()
+                    cliente_doc = nuevo_doc
+                    st.rerun()
+                else:
+                    st.error("⚠️ Nombre y DNI/RUC obligatorios.")
+
+    st.divider()
+
+    # 2. Configuración del Comprobante
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA", "NOTA DE CRÉDITO", "NOTA DE DÉBITO"])
+        serie_num = st.text_input("Serie y Número Comprobante", value="B001-000001" if "BOLETA" in tipo_doc else "F001-000001")
+    with c2:
+        tipo_operacion = st.selectbox("Tipo Operación", ["VENTA INTERNA", "VENTA AL CONTADO", "VENTA A CRÉDITO"])
+        fecha_emision = st.date_input("Fecha Emisión", datetime.now())
+    with c3:
+        condicion_pago = st.radio("Condición de Pago", ["CONTADO", "CRÉDITO"])
+        if condicion_pago == "CRÉDITO":
+            dias_credito = st.number_input("Días de Crédito", min_value=1, value=30)
+            fecha_venc = fecha_emision + timedelta(days=dias_credito)
+            st.info(f"📅 Fecha Vencimiento: **{fecha_venc.strftime('%d/%m/%Y')}**")
+
+    st.divider()
+
+    # 3. Selección e Inclusión de Productos al Carrito
+    prods = supabase.table("productos").select("id, codigo, descripcion, precio, stock").execute().data
+    if prods:
+        dict_prods = {f"{p['codigo']} | {p['descripcion']} (Stock: {p['stock']})": p for p in prods}
+        
+        cp1, cp2, cp3 = st.columns([3, 1, 1])
+        with cp1:
+            p_sel_key = st.selectbox("Buscar Producto para Salida / Venta", list(dict_prods.keys()))
+        with cp2:
+            cant_v = st.number_input("Cantidad", min_value=1, value=1)
+        with cp3:
+            st.write("")
+            st.write("")
+            if st.button("➕ Agregar al Comprobante"):
+                p_info = dict_prods[p_sel_key]
+                if cant_v <= p_info['stock']:
+                    st.session_state.carrito.append({
+                        "id": p_info['id'],
+                        "codigo": p_info['codigo'],
+                        "descripcion": p_info['descripcion'],
+                        "cantidad": cant_v,
+                        "precio_unitario": p_info['precio'],
+                        "subtotal": cant_v * p_info['precio']
+                    })
+                    st.success("✅ Producto agregado")
+                else:
+                    st.error("⚠️ La cantidad supera el stock disponible.")
+
+    # 4. Vista previa del Comprobante
+    if st.session_state.carrito:
+        st.subheader("📋 Detalle del Comprobante a Emitir")
+        df_car = pd.DataFrame(st.session_state.carrito)
+        st.dataframe(df_car[["codigo", "descripcion", "cantidad", "precio_unitario", "subtotal"]], use_container_width=True)
+
+        total_gen = df_car["subtotal"].sum()
+        subtotal = total_gen / 1.18
+        igv = total_gen - subtotal
+
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Op. Gravada (Subtotal)", f"S/. {subtotal:.2f}")
+        col_m2.metric("IGV (18%)", f"S/. {igv:.2f}")
+        col_m3.metric("TOTAL GENERAL", f"S/. {total_gen:.2f}")
+
+        b_col1, b_col2 = st.columns(2)
+        with b_col1:
+            if st.button("🔴 Vaciar Selección"):
+                st.session_state.carrito = []
+                st.rerun()
+
+        with b_col2:
+            if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK"):
+                comp_data = {
+                    "tipo_comprobante": tipo_doc,
+                    "serie_numero": serie_num,
+                    "cliente_nombre": cliente_nom,
+                    "cliente_documento": cliente_doc,
+                    "subtotal": subtotal,
+                    "igv": igv,
+                    "total": total_gen
+                }
+                res = supabase.table("comprobantes").insert(comp_data).execute()
+                comp_id = res.data[0]['id']
+
+                for item in st.session_state.carrito:
+                    det = {
+                        "comprobante_id": comp_id,
+                        "producto_id": item['id'],
+                        "cantidad": item['cantidad'],
+                        "precio_unitario": item['precio_unitario']
+                    }
+                    supabase.table("detalle_comprobante").insert(det).execute()
+
+                    prod_bd = supabase.table("productos").select("stock").eq("id", item['id']).execute().data[0]
+                    nuevo_stk = prod_bd['stock'] - item['cantidad']
+                    supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
+
+                st.balloons()
+                st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito! Stock descontado.")
+                st.session_state.carrito = []
+                st.rerun()
+
+# -------------------------------------------------------------------
+# 6. DEVOLUCIONES
 # -------------------------------------------------------------------
 elif menu == "🔄 Devoluciones":
-    st.header("🔄 Registro de Devoluciones a Proveedor")
+    st.header("🔄 Registro de Devoluciones de Clientes / Proveedores")
     
+    col1, col2 = st.columns(2)
+    with col1:
+        tipo_doc = st.selectbox("Tipo Comprobante", ["BOLETA", "FACTURA", "TICKET", "NOTA DE CRÉDITO"])
+        nro_doc = st.text_input("Número Comprobante")
+        tipo_op = st.selectbox("Tipo de Operación", ["DEVOLUCIÓN POR DEFECTO", "DEVOLUCIÓN POR STOCK", "AJUSTE DE INVENTARIO"])
+    with col2:
+        fecha_emision = st.date_input("Fecha", datetime.now())
+        motivo = st.text_area("Motivo de Devolución *")
+
     prods = supabase.table("productos").select("id, codigo, descripcion, precio").execute().data
     provs = supabase.table("proveedores").select("id, nombre").execute().data
 
@@ -141,101 +371,90 @@ elif menu == "🔄 Devoluciones":
         dict_prods = {f"{p['codigo']} - {p['descripcion']}": p for p in prods}
         dict_provs = {pr['nombre']: pr['id'] for pr in provs}
 
-        with st.form("form_devolucion", clear_on_submit=True):
-            nro_boleta = st.text_input("Número de Boleta de la Compra")
-            prod_sel = st.selectbox("Producto a Devolver", list(dict_prods.keys()))
-            prov_sel = st.selectbox("Proveedor", list(dict_provs.keys()))
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                cantidad = st.number_input("Cantidad a Devolver", min_value=1, value=1)
-            with col2:
-                precio = st.number_input("Precio Unitario", value=float(dict_prods[prod_sel]['precio']))
-            
-            motivo = st.text_area("Motivo de la Devolución *")
+        prod_sel = st.selectbox("Seleccionar Producto", list(dict_prods.keys()))
+        prov_sel = st.selectbox("Proveedor", list(dict_provs.keys()))
+        cant_dev = st.number_input("Cantidad a Devolver", min_value=1, value=1)
 
-            if st.form_submit_button("Registrar Devolución"):
-                if motivo:
-                    dev = {
-                        "numero_boleta": nro_boleta,
-                        "producto_id": dict_prods[prod_sel]['id'],
-                        "proveedor_id": dict_provs[prov_sel],
-                        "cantidad": cantidad,
-                        "precio": precio,
-                        "motivo_devolucion": motivo
-                    }
-                    supabase.table("devoluciones").insert(dev).execute()
-                    st.success("✅ Devolución registrada y ajustada en el inventario.")
-                    st.rerun()
-                else:
-                    st.error("⚠️ Ingrese el motivo de la devolución.")
-
-# -------------------------------------------------------------------
-# 5. MÓDULO DE VENTAS (BOLETAS / FACTURAS)
-# -------------------------------------------------------------------
-elif menu == "🧾 Ventas (Facturación)":
-    st.header("🧾 Punto de Venta y Emisión de Comprobantes")
-    
-    prods = supabase.table("productos").select("id, codigo, descripcion, precio, stock").execute().data
-    
-    if prods:
-        dict_prods = {f"{p['codigo']} - {p['descripcion']} (Stock: {p['stock']})": p for p in prods}
-        
-        tipo_doc = st.selectbox("Tipo de Comprobante", ["BOLETA", "FACTURA"])
-        serie_num = st.text_input("Número de Serie/Comprobante (Ej: B001-000123)")
-        cliente = st.text_input("Nombre del Cliente")
-        doc_cliente = st.text_input("DNI / RUC del Cliente")
-        
-        st.divider()
-        prod_sel = st.selectbox("Seleccionar Producto a Vender", list(dict_prods.keys()))
-        prod_actual = dict_prods[prod_sel]
-        
-        cant_venta = st.number_input("Cantidad", min_value=1, max_value=max(1, prod_actual['stock']), value=1)
-        precio_venta = prod_actual['precio']
-        
-        subtotal = cant_venta * precio_venta
-        igv = subtotal * 0.18
-        total = subtotal + igv
-
-        st.metric("Total a Cobrar (inc. IGV)", f"S/. {total:.2f}")
-
-        if st.button("Emitir Comprobante y Descontar Stock"):
-            if serie_num and cliente:
-                # 1. Crear cabecera comprobante
-                comp_data = {
-                    "tipo_comprobante": tipo_doc,
-                    "serie_numero": serie_num,
-                    "cliente_nombre": cliente,
-                    "cliente_documento": doc_cliente,
-                    "subtotal": subtotal,
-                    "igv": igv,
-                    "total": total
+        if st.button("Registrar Devolución"):
+            if motivo and nro_doc:
+                dev_data = {
+                    "numero_boleta": nro_doc,
+                    "producto_id": dict_prods[prod_sel]["id"],
+                    "proveedor_id": dict_provs[prov_sel],
+                    "cantidad": cant_dev,
+                    "precio": dict_prods[prod_sel]["precio"],
+                    "motivo_devolucion": f"[{tipo_doc} - {tipo_op}] | {motivo}"
                 }
-                res = supabase.table("comprobantes").insert(comp_data).execute()
-                comp_id = res.data[0]['id']
-
-                # 2. Registrar detalle (descuenta stock mediante el trigger)
-                detalle = {
-                    "comprobante_id": comp_id,
-                    "producto_id": prod_actual['id'],
-                    "cantidad": cant_venta,
-                    "precio_unitario": precio_venta
-                }
-                supabase.table("detalle_comprobante").insert(detalle).execute()
-
-                st.balloons()
-                st.success(f"🎉 ¡{tipo_doc} emitida correctamente!")
+                supabase.table("devoluciones").insert(dev_data).execute()
+                st.success("✅ Devolución procesada.")
                 st.rerun()
 
 # -------------------------------------------------------------------
-# 6. MÓDULO DE ESTADÍSTICAS
+# 7. HISTÓRICO DE COMPROBANTES Y SALIDAS
 # -------------------------------------------------------------------
-elif menu == "📊 Estadísticas":
-    st.header("📊 Analítica de Ventas y Productos")
-    
-    st.subheader("Top Productos Más Vendidos")
-    top_v = supabase.table("vista_productos_mas_vendidos").select("*").execute()
-    if top_v.data:
-        st.dataframe(top_v.data, use_container_width=True)
+elif menu == "📊 Histórico de Comprobantes":
+    st.header("📊 Histórico de Ventas y Comprobantes Emitidos")
+    comps = supabase.table("comprobantes").select("*").execute().data
+    if comps:
+        st.dataframe(pd.DataFrame(comps), use_container_width=True)
     else:
-        st.info("Aún no hay suficientes ventas registradas para generar analíticas.")
+        st.info("Aún no se han emitido comprobantes de venta.")
+
+# -------------------------------------------------------------------
+# 8. ESTADÍSTICAS, ALERTAS Y REPORTES
+# -------------------------------------------------------------------
+elif menu == "📈 Estadísticas, Alertas y Reportes":
+    st.header("📈 Panel de Inteligencia Comercial y Alertas")
+
+    # A. ALERTAS DE REABASTECIMIENTO
+    st.subheader("⚠️ Alertas de Stock Bajo (Para Comprar)")
+    try:
+        alertas_res = supabase.table("vista_alerta_stock").select("*").execute().data
+        df_alertas = pd.DataFrame(alertas_res) if alertas_res else pd.DataFrame()
+        
+        if not df_alertas.empty:
+            st.error(f"¡Atención! Hay {len(df_alertas)} productos con stock crítico (mínimo alcanzado).")
+            st.dataframe(df_alertas[["codigo", "descripcion", "stock", "proveedor", "costo_actual"]], use_container_width=True)
+        else:
+            st.success("El inventario se encuentra en niveles óptimos.")
+    except Exception as e:
+        st.warning("Verifica que las vistas SQL estén creadas correctamente en Supabase.")
+
+    st.divider()
+
+    # B. REPORTES Y PRODUCTOS MÁS VENDIDOS
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Top Productos Más Vendidos**")
+        try:
+            top_prod_res = supabase.table("vista_productos_mas_vendidos").select("*").execute().data
+            df_top_prod = pd.DataFrame(top_prod_res) if top_prod_res else pd.DataFrame()
+            if not df_top_prod.empty:
+                st.bar_chart(df_top_prod.set_index("descripcion")["total_unidades_vendidas"])
+                st.dataframe(df_top_prod[["codigo", "descripcion", "total_unidades_vendidas", "total_recaudado"]])
+        except Exception as e:
+            st.warning("No se pudieron cargar los datos de productos más vendidos.")
+
+    with col2:
+        st.markdown("**Clientes Frecuentes (Top Compradores)**")
+        try:
+            top_cli_res = supabase.table("vista_clientes_frecuentes").select("*").execute().data
+            df_top_cli = pd.DataFrame(top_cli_res) if top_cli_res else pd.DataFrame()
+            if not df_top_cli.empty:
+                st.dataframe(df_top_cli[["nombre", "ruc_dni", "cantidad_compras", "total_gastado"]])
+        except Exception as e:
+            st.warning("No se pudieron cargar los datos de clientes frecuentes.")
+
+    st.divider()
+
+    # C. COMPARATIVO DE PRECIOS POR PROVEEDOR
+    st.subheader("🏷️ Proveedores con Mejor Precio Registrado")
+    try:
+        precios_res = supabase.table("vista_mejor_precio_proveedor").select("*").execute().data
+        df_precios = pd.DataFrame(precios_res) if precios_res else pd.DataFrame()
+        if not df_precios.empty:
+            st.dataframe(df_precios, use_container_width=True)
+    except Exception as e:
+        st.warning("No se pudieron cargar las alertas de mejores precios.")
+
+
