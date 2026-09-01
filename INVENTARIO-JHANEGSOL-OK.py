@@ -179,18 +179,120 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
         st.warning("⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor registrados.")
 
 import io
+import io
+import pandas as pd
+import streamlit as st
+
+# Módulos para la generación de PDF nativo con ReportLab
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 # -------------------------------------------------------------------
-# 5. VENTAS Y EMISIÓN DE COMPROBANTES
+# FUNCIÓN AUXILIAR: GENERAR PDF EN MEMORIA
+# -------------------------------------------------------------------
+def generar_pdf_comprobante(tipo_doc, serie_num, cliente_nom, cliente_doc, carrito, subtotal, igv, total_gen):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=A4, 
+        rightMargin=30, 
+        leftMargin=30, 
+        topMargin=30, 
+        bottomMargin=30
+    )
+    story = []
+    styles = getSampleStyleSheet()
+
+    # Estilos del PDF
+    titulo_style = ParagraphStyle('Titulo', parent=styles['Heading1'], alignment=1, fontSize=16, leading=20, fontName="Helvetica-Bold")
+    subtitulo_style = ParagraphStyle('SubTitulo', parent=styles['Normal'], alignment=1, fontSize=10, leading=12)
+    comprobante_style = ParagraphStyle('Comp', parent=styles['Heading2'], alignment=1, fontSize=12, leading=15, fontName="Helvetica-Bold")
+    normal_style = styles['Normal']
+    derecha_style = ParagraphStyle('Derecha', parent=styles['Normal'], alignment=2)
+    bold_derecha = ParagraphStyle('BoldDerecha', parent=styles['Normal'], alignment=2, fontName="Helvetica-Bold")
+
+    # Encabezado de la empresa
+    story.append(Paragraph("JHANEGSOL S.A.C.", titulo_style))
+    story.append(Paragraph("RUC: 20600000001", subtitulo_style))
+    story.append(Paragraph("Oficina Principal - Huacho, Lima - Perú", subtitulo_style))
+    story.append(Spacer(1, 15))
+
+    # Título del Comprobante
+    story.append(Paragraph(f"<b>{tipo_doc}</b>", comprobante_style))
+    story.append(Paragraph(f"<b>N° {serie_num}</b>", comprobante_style))
+    story.append(Spacer(1, 10))
+
+    # Datos del Cliente
+    datos_cliente = [
+        [Paragraph(f"<b>Cliente:</b> {cliente_nom}", normal_style)],
+        [Paragraph(f"<b>DNI / RUC:</b> {cliente_doc}", normal_style)],
+        [Paragraph(f"<b>Fecha de Emisión:</b> {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}", normal_style)]
+    ]
+    t_cliente = Table(datos_cliente, colWidths=[500])
+    story.append(t_cliente)
+    story.append(Spacer(1, 15))
+
+    # Tabla de Productos
+    data_tabla = [[
+        Paragraph("<b>Cant.</b>", normal_style),
+        Paragraph("<b>Descripción</b>", normal_style),
+        Paragraph("<b>P. Unit (S/.)</b>", derecha_style),
+        Paragraph("<b>Subtotal (S/.)</b>", derecha_style)
+    ]]
+
+    for item in carrito:
+        data_tabla.append([
+            Paragraph(str(item['cantidad']), normal_style),
+            Paragraph(item['descripcion'], normal_style),
+            Paragraph(f"{item['precio_unitario']:.2f}", derecha_style),
+            Paragraph(f"{item['subtotal']:.2f}", derecha_style)
+        ])
+
+    tabla_prod = Table(data_tabla, colWidths=[50, 270, 90, 90])
+    tabla_prod.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#f0f2f5")),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('LINEBELOW', (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+        ('LINEABOVE', (0, 0), (-1, 0), 1, colors.black),
+        ('LINEBELOW', (0, 0), (-1, 0), 1, colors.black),
+    ]))
+    story.append(tabla_prod)
+    story.append(Spacer(1, 15))
+
+    # Totales y Resumen
+    data_totales = [
+        [Paragraph("Op. Gravada:", derecha_style), Paragraph(f"S/. {subtotal:.2f}", derecha_style)],
+        [Paragraph("IGV (18%):", derecha_style), Paragraph(f"S/. {igv:.2f}", derecha_style)],
+        [Paragraph("<b>TOTAL A PAGAR:</b>", bold_derecha), Paragraph(f"<b>S/. {total_gen:.2f}</b>", bold_derecha)]
+    ]
+    tabla_totales = Table(data_totales, colWidths=[400, 100])
+    tabla_totales.setStyle(TableStyle([
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(tabla_totales)
+    story.append(Spacer(1, 20))
+
+    story.append(Paragraph("¡Gracias por su preferencia en JHANEGSOL S.A.C.!", subtitulo_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
+
+# -------------------------------------------------------------------
+# 5. SECCIÓN DE VENTAS Y EMISIÓN EN STREAMLIT
 # -------------------------------------------------------------------
 if menu == "🧾 Ventas y Emisión de Comprobantes":
     st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Tickets")
 
-    # Inicializar carrito si no existe
     if "carrito" not in st.session_state:
         st.session_state.carrito = []
 
-    # 1. Selección o Creación de Cliente
+    # 1. Selección o Registro de Cliente
     st.subheader("👤 Seleccionar o Registrar Cliente")
     res_clientes_v = supabase.table("clientes").select("*").execute().data
     df_cli_v = pd.DataFrame(res_clientes_v) if res_clientes_v else pd.DataFrame()
@@ -227,10 +329,10 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
             with col_c2:
                 st.text_input("DNI / RUC", value=cliente_doc, disabled=True)
         else:
-            st.warning("No hay clientes registrados en la BD. Usa la opción 'Registrar Nuevo Cliente'.")
+            st.warning("No hay clientes registrados en la BD. Usa 'Registrar Nuevo Cliente'.")
 
     elif opcion_cliente == "➕ Registrar Nuevo Cliente":
-        st.info("Ingresa los datos para registrarlo y usarlo en este comprobante:")
+        st.info("Ingresa los datos del nuevo cliente:")
         with st.form("form_cli_rapido_venta"):
             col1, col2 = st.columns(2)
             with col1:
@@ -262,7 +364,6 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
     with c1:
         tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA", "NOTA DE CRÉDITO", "NOTA DE DÉBITO"])
         
-        # Generación de correlativo automático
         if "FACTURA" in tipo_doc:
             prefijo = "F001"
         elif "TICKET" in tipo_doc:
@@ -309,7 +410,8 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
             st.write("")
             if st.button("➕ Agregar al Comprobante"):
                 p_info = dict_prods[p_sel_key]
-                if cant_v <= p_info['stock']:
+                # Nota de crédito permite agregar independientemente del stock actual
+                if "NOTA DE CRÉDITO" in tipo_doc or cant_v <= p_info['stock']:
                     st.session_state.carrito.append({
                         "id": p_info['id'],
                         "codigo": p_info['codigo'],
@@ -323,7 +425,7 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                 else:
                     st.error("⚠️ La cantidad supera el stock disponible.")
 
-    # 4. Detalle y Vista Previa del Comprobante
+    # 4. Detalle, Generación/Descarga PDF y Emisión
     if st.session_state.carrito:
         st.subheader("📋 Detalle de la Venta")
         df_car = pd.DataFrame(st.session_state.carrito)
@@ -338,87 +440,24 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
         col_m2.metric("IGV (18%)", f"S/. {igv:.2f}")
         col_m3.metric("TOTAL GENERAL", f"S/. {total_gen:.2f}")
 
-        # --- SECCIÓN VISTA PREVIA Y EMISIÓN ---
         st.divider()
-        st.subheader("👁️ Vista Previa del Comprobante")
+        st.subheader("📥 Descargar Comprobante PDF")
 
-        # Construir tabla HTML de productos para la vista previa
-        filas_html = ""
-        for item in st.session_state.carrito:
-            filas_html += f"""
-            <tr>
-                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: center;">{item['cantidad']}</td>
-                <td style="padding: 6px; border-bottom: 1px dashed #ccc;">{item['descripcion']}</td>
-                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: right;">S/. {item['precio_unitario']:.2f}</td>
-                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: right;">S/. {item['subtotal']:.2f}</td>
-            </tr>
-            """
+        # Generar el archivo PDF en memoria
+        archivo_pdf = generar_pdf_comprobante(
+            tipo_doc, serie_num, cliente_nom, cliente_doc, 
+            st.session_state.carrito, subtotal, igv, total_gen
+        )
 
-        html_preview = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{tipo_doc} {serie_num}</title>
-</head>
-<body style="background-color: #f0f2f5; font-family: 'Courier New', Courier, monospace; margin: 0; padding: 10px;">
-    <div style="text-align: center; margin-bottom: 10px;">
-        <button onclick="descargarTicket()" style="background-color: #008CBA; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-            📥 DESCARGAR / IMPRIMIR COMPROBANTE
-        </button>
-    </div>
-    <div id="ticket-print" style="max-width: 380px; margin: 0 auto; padding: 20px; border: 2px dashed #333; background-color: #ffffff; color: #000000; font-size: 13px;">
-        <div style="text-align: center; margin-bottom: 10px;">
-            <h3 style="margin: 0; font-size: 18px; color: #000;">JHANEGSOL S.A.C.</h3>
-            <p style="margin: 2px 0;">RUC: 20600000001</p>
-            <p style="margin: 2px 0;">Oficina Principal - Huacho, Lima - Perú</p>
-            <hr style="border-top: 1px dashed #000; margin: 8px 0;">
-            <h4 style="margin: 5px 0; font-size: 15px; color: #000;">{tipo_doc}</h4>
-            <p style="margin: 2px 0; font-weight: bold; font-size: 14px;">N° {serie_num}</p>
-        </div>
-        <div style="margin-bottom: 10px;">
-            <p style="margin: 2px 0;"><strong>Cliente:</strong> {cliente_nom}</p>
-            <p style="margin: 2px 0;"><strong>DNI/RUC:</strong> {cliente_doc}</p>
-        </div>
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 12px;">
-            <thead>
-                <tr style="border-bottom: 1px solid #000; border-top: 1px solid #000;">
-                    <th style="text-align: center; padding: 4px;">CANT</th>
-                    <th style="text-align: left; padding: 4px;">DESCRIPCIÓN</th>
-                    <th style="text-align: right; padding: 4px;">P.U.</th>
-                    <th style="text-align: right; padding: 4px;">TOTAL</th>
-                </tr>
-            </thead>
-            <tbody>
-                {filas_html}
-            </tbody>
-        </table>
-        <div style="text-align: right; margin-top: 10px; border-top: 1px solid #000; padding-top: 5px;">
-            <p style="margin: 2px 0;"><strong>OP. GRAVADA:</strong> S/. {subtotal:.2f}</p>
-            <p style="margin: 2px 0;"><strong>IGV (18%):</strong> S/. {igv:.2f}</p>
-            <p style="margin: 4px 0; font-size: 15px;"><strong>TOTAL A PAGAR: S/. {total_gen:.2f}</strong></p>
-        </div>
-        <div style="text-align: center; margin-top: 15px; font-size: 11px;">
-            <p style="margin: 2px 0;">¡Gracias por su compra en JHANEGSOL S.A.C.!</p>
-        </div>
-    </div>
-    <script>
-    function descargarTicket() {{
-        var contenido = document.documentElement.outerHTML;
-        var blob = new Blob([contenido], {{ type: 'text/html' }});
-        var a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'Comprobante_{tipo_doc.replace(" ", "_")}_{serie_num}.html';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-    }}
-    </script>
-</body>
-</html>
-"""
+        st.download_button(
+            label=f"📄 DESCARGAR PDF ({tipo_doc} {serie_num})",
+            data=archivo_pdf,
+            file_name=f"{tipo_doc.replace(' ', '_')}_{serie_num}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
 
-        # Renderizar la vista previa visual
-        st.components.v1.html(html_preview, height=500, scrolling=True)
+        st.divider()
 
         # Botones de Acción
         b_col1, b_col2 = st.columns(2)
@@ -429,9 +468,9 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                 st.rerun()
 
         with b_col2:
-            if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK", type="primary", use_container_width=True):
+            accion_texto = "SUMAR AL STOCK" if "NOTA DE CRÉDITO" in tipo_doc else "DESCONTAR STOCK"
+            if st.button(f"🖨️ EMITIR {tipo_doc} Y {accion_texto}", type="primary", use_container_width=True):
                 try:
-                    # Validar e incrementar automáticamente si la serie y número ya existen
                     correlativo_final = serie_num
                     existe = supabase.table("comprobantes").select("id").eq("serie_numero", correlativo_final).execute().data
                     
@@ -444,13 +483,10 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                             .limit(1)\
                             .execute().data
                         
-                        if ult_reg:
-                            num_act = int(ult_reg[0]["serie_numero"].split("-")[1]) + 1
-                        else:
-                            num_act = 1
+                        num_act = int(ult_reg[0]["serie_numero"].split("-")[1]) + 1 if ult_reg else 1
                         correlativo_final = f"{prefix}-{num_act:06d}"
 
-                    # 1. Guardar la cabecera del comprobante
+                    # 1. Registrar cabecera del comprobante
                     comp_data = {
                         "tipo_comprobante": tipo_doc,
                         "serie_numero": correlativo_final,
@@ -466,7 +502,7 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                     if res.data:
                         comp_id = res.data[0]['id']
 
-                        # 2. Guardar el detalle de items y descontar stock
+                        # 2. Registrar detalle y actualizar inventario según el tipo de comprobante
                         for item in st.session_state.carrito:
                             det = {
                                 "comprobante_id": comp_id,
@@ -476,20 +512,27 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                             }
                             supabase.table("detalle_comprobante").insert(det).execute()
 
-                            # Descontar del inventario
                             prod_bd = supabase.table("productos").select("stock").eq("id", item['id']).execute().data[0]
-                            nuevo_stk = prod_bd['stock'] - item['cantidad']
+                            stock_actual = prod_bd['stock']
+
+                            # Regla: NOTA DE CRÉDITO suma al stock, otros comprobantes restan
+                            if "NOTA DE CRÉDITO" in tipo_doc:
+                                nuevo_stk = stock_actual + item['cantidad']
+                            else:
+                                nuevo_stk = stock_actual - item['cantidad']
+
                             supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
 
                         st.balloons()
-                        st.success(f"🎉 ¡{tipo_doc} {correlativo_final} emitida con éxito para JHANEGSOL S.A.C.!")
+                        st.success(f"🎉 ¡{tipo_doc} {correlativo_final} emitida con éxito para JHANEGSOL S.A.C.! Inventario actualizado.")
                         st.session_state.carrito = []
                         st.rerun()
                     else:
                         st.error("⚠️ La base de datos no devolvió respuesta al guardar el comprobante.")
                         
                 except Exception as e:
-                    st.error(f"❌ Error al procesar la venta: {str(e)}")
+                    st.error(f"❌ Error al procesar el comprobante: {str(e)}")
+
 # -------------------------------------------------------------------
 # 6. DEVOLUCIONES
 # -------------------------------------------------------------------
