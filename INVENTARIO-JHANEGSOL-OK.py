@@ -719,7 +719,7 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
                     st.rerun()
 
 # -------------------------------------------------------------------
-# 5. VENTAS DIRECTAS (BOLETAS Y FACTURAS)
+# 5. VENTAS DIRECTAS (BOLETAS Y FACTURAS) - CORREGIDO
 # -------------------------------------------------------------------
 elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
     st.header("🧾 Punto de Venta: Boletas, Facturas y Tickets")
@@ -795,24 +795,36 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
                             "id": p_info["id"],
                             "codigo": p_info["codigo"],
                             "descripcion": p_info["descripcion"],
-                            "cantidad": cant_v,
-                            "precio_unitario": p_info["precio"],
-                            "subtotal": cant_v * p_info["precio"],
+                            "cantidad": int(cant_v),
+                            "precio_unitario": float(p_info["precio"]),
+                            "subtotal": float(cant_v * p_info["precio"]),
                         })
                     st.success("✅ Agregado")
                     st.rerun()
 
     if st.session_state.carrito_ventas:
         st.subheader("📋 Detalle de la Venta")
+        
+        # Callback para actualizar cantidad de forma segura sin mutaciones dobles en render
+        def actualizar_cant_carrito(index):
+            nueva_c = st.session_state[f"v_cant_{index}"]
+            st.session_state.carrito_ventas[index]["cantidad"] = int(nueva_c)
+            st.session_state.carrito_ventas[index]["subtotal"] = float(nueva_c * st.session_state.carrito_ventas[index]["precio_unitario"])
+
         for idx, item in enumerate(st.session_state.carrito_ventas):
             col_d1, col_d2, col_d3, col_d4 = st.columns([3, 1, 1, 1])
             col_d1.write(f"**{item['codigo']}** - {item['descripcion']}")
-            nueva_cant = col_d2.number_input("Cant.", min_value=1, value=int(item["cantidad"]), key=f"v_cant_{idx}")
+            
+            col_d2.number_input(
+                "Cant.", 
+                min_value=1, 
+                value=int(item["cantidad"]), 
+                key=f"v_cant_{idx}",
+                on_change=actualizar_cant_carrito,
+                args=(idx,)
+            )
             col_d3.write(f"P.U: S/. {item['precio_unitario']:.2f}")
-
-            st.session_state.carrito_ventas[idx]["cantidad"] = nueva_cant
-            st.session_state.carrito_ventas[idx]["subtotal"] = nueva_cant * item["precio_unitario"]
-            col_d4.write(f"Subtotal: S/. {st.session_state.carrito_ventas[idx]['subtotal']:.2f}")
+            col_d4.write(f"Subtotal: S/. {item['subtotal']:.2f}")
 
         if st.button("🗑️ Vaciar Carrito"):
             st.session_state.carrito_ventas = []
@@ -847,7 +859,6 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
             file_name=f"{serie_num}.pdf",
             mime="application/pdf",
         )
-
 # -------------------------------------------------------------------
 # 6. NOTAS DE CRÉDITO Y DÉBITO
 # -------------------------------------------------------------------
