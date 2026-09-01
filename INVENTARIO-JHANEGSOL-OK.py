@@ -184,6 +184,10 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
 elif menu == "🧾 Ventas y Emisión de Comprobantes":
     st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Tickets")
 
+    # Inicializar carrito si no existe
+    if "carrito" not in st.session_state:
+        st.session_state.carrito = []
+
     # 1. Selección o Creación de Cliente
     st.subheader("👤 Seleccionar o Registrar Cliente")
     res_clientes_v = supabase.table("clientes").select("*").execute().data
@@ -251,15 +255,25 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
 
     st.divider()
 
-# 2. Configuración del Comprobante
+    # 2. Configuración del Comprobante
     c1, c2, c3 = st.columns(3)
     with c1:
         tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA", "NOTA DE CRÉDITO", "NOTA DE DÉBITO"])
         
-        # Generación automática de correlativo
-        prefijo = "F001" if "FACTURA" in tipo_doc else "B001"
+        # Generación de correlativo automático
+        if "FACTURA" in tipo_doc:
+            prefijo = "F001"
+        elif "TICKET" in tipo_doc:
+            prefijo = "T001"
+        elif "NOTA DE CRÉDITO" in tipo_doc:
+            prefijo = "NC01"
+        elif "NOTA DE DÉBITO" in tipo_doc:
+            prefijo = "ND01"
+        else:
+            prefijo = "B001"
+
         try:
-            # Buscar el último correlativo generado para esa serie
+            # Consulta para obtener el último correlativo registrado con ese prefijo
             ult_comp = supabase.table("comprobantes")\
                 .select("serie_numero")\
                 .like("serie_numero", f"{prefijo}-%")\
@@ -304,16 +318,17 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         "subtotal": cant_v * p_info['precio']
                     })
                     st.success("✅ Producto agregado")
+                    st.rerun()
                 else:
                     st.error("⚠️ La cantidad supera el stock disponible.")
 
-# 4. Vista previa del Comprobante
+    # 4. Detalle y Vista Previa del Comprobante
     if st.session_state.carrito:
-        st.subheader("📋 Detalle del Comprobante a Emitir")
+        st.subheader("📋 Detalle de la Venta")
         df_car = pd.DataFrame(st.session_state.carrito)
         st.dataframe(df_car[["codigo", "descripcion", "cantidad", "precio_unitario", "subtotal"]], use_container_width=True)
 
-        total_gen = df_car["subtotal"].sum()
+        total_gen = float(df_car["subtotal"].sum())
         subtotal = total_gen / 1.18
         igv = total_gen - subtotal
 
@@ -322,32 +337,110 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         col_m2.metric("IGV (18%)", f"S/. {igv:.2f}")
         col_m3.metric("TOTAL GENERAL", f"S/. {total_gen:.2f}")
 
+        # --- SECCIÓN VISTA PREVIA Y EMISIÓN ---
+        st.divider()
+        st.subheader("👁️ Vista Previa del Comprobante")
+
+        # Construir tabla HTML de productos para la vista previa
+        filas_html = ""
+        for item in st.session_state.carrito:
+            filas_html += f"""
+            <tr>
+                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: center;">{item['cantidad']}</td>
+                <td style="padding: 6px; border-bottom: 1px dashed #ccc;">{item['descripcion']}</td>
+                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: right;">S/. {item['precio_unitario']:.2f}</td>
+                <td style="padding: 6px; border-bottom: 1px dashed #ccc; text-align: right;">S/. {item['subtotal']:.2f}</td>
+            </tr>
+            """
+
+        html_preview = f"""
+        <div id="ticket-print" style="max-width: 400px; margin: 0 auto; padding: 20px; border: 2px dashed #333; background-color: #ffffff; color: #000000; font-family: 'Courier New', Courier, monospace; font-size: 13px;">
+            <div style="text-align: center; margin-bottom: 10px;">
+                <h3 style="margin: 0; font-size: 18px; color: #000;">MI EMPRESA S.A.C.</h3>
+                <p style="margin: 2px 0;">RUC: 20123456789</p>
+                <p style="margin: 2px 0;">Av. Principal #123 - Lima</p>
+                <p style="margin: 2px 0;">Teléfono: (01) 555-4321</p>
+                <hr style="border: top 1px dashed #000; margin: 8px 0;">
+                <h4 style="margin: 5px 0; font-size: 15px; color: #000;">{tipo_doc}</h4>
+                <p style="margin: 2px 0; font-weight: bold; font-size: 14px;">N° {serie_num}</p>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <p style="margin: 2px 0;"><strong>Cliente:</strong> {cliente_nom}</p>
+                <p style="margin: 2px 0;"><strong>DNI/RUC:</strong> {cliente_doc}</p>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px; font-size: 12px;">
+                <thead>
+                    <tr style="border-bottom: 1px solid #000; border-top: 1px solid #000;">
+                        <th style="text-align: center; padding: 4px;">CANT</th>
+                        <th style="text-align: left; padding: 4px;">DESCRIPCIÓN</th>
+                        <th style="text-align: right; padding: 4px;">P.U.</th>
+                        <th style="text-align: right; padding: 4px;">TOTAL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filas_html}
+                </tbody>
+            </table>
+            <div style="text-align: right; margin-top: 10px; border-top: 1px solid #000; padding-top: 5px;">
+                <p style="margin: 2px 0;"><strong>OP. GRAVADA:</strong> S/. {subtotal:.2f}</p>
+                <p style="margin: 2px 0;"><strong>IGV (18%):</strong> S/. {igv:.2f}</p>
+                <p style="margin: 4px 0; font-size: 15px;"><strong>TOTAL A PAGAR: S/. {total_gen:.2f}</strong></p>
+            </div>
+            <div style="text-align: center; margin-top: 15px; font-size: 11px;">
+                <p style="margin: 2px 0;">¡Gracias por su compra!</p>
+            </div>
+        </div>
+        """
+
+        # Renderizar la vista previa del comprobante en Streamlit
+        st.components.v1.html(html_preview, height=450, scrolling=True)
+
+        # Botones de Acción
         b_col1, b_col2 = st.columns(2)
         with b_col1:
-            if st.button("🔴 Vaciar Selección"):
+            if st.button("🔴 Vaciar Selección", use_container_width=True):
                 st.session_state.carrito = []
                 st.rerun()
 
         with b_col2:
-            if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK"):
-                comp_data = {
-                    "tipo_comprobante": tipo_doc,
-                    "serie_numero": serie_num,
-                    "cliente_nombre": cliente_nom,
-                    "cliente_documento": cliente_doc,
-                    "subtotal": subtotal,
-                    "igv": igv,
-                    "total": total_gen
-                }
-                
+            if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK", type="primary", use_container_width=True):
                 try:
-                    # Intento de inserción en Supabase
+                    # Validar e incrementar automáticamente si la serie y número ya existen
+                    correlativo_final = serie_num
+                    existe = supabase.table("comprobantes").select("id").eq("serie_numero", correlativo_final).execute().data
+                    
+                    if existe:
+                        prefix = correlativo_final.split("-")[0]
+                        ult_reg = supabase.table("comprobantes")\
+                            .select("serie_numero")\
+                            .like("serie_numero", f"{prefix}-%")\
+                            .order("id", desc=True)\
+                            .limit(1)\
+                            .execute().data
+                        
+                        if ult_reg:
+                            num_act = int(ult_reg[0]["serie_numero"].split("-")[1]) + 1
+                        else:
+                            num_act = 1
+                        correlativo_final = f"{prefix}-{num_act:06d}"
+
+                    # 1. Guardar la cabecera del comprobante
+                    comp_data = {
+                        "tipo_comprobante": tipo_doc,
+                        "serie_numero": correlativo_final,
+                        "cliente_nombre": cliente_nom,
+                        "cliente_documento": cliente_doc,
+                        "subtotal": round(subtotal, 2),
+                        "igv": round(igv, 2),
+                        "total": round(total_gen, 2)
+                    }
+                    
                     res = supabase.table("comprobantes").insert(comp_data).execute()
                     
                     if res.data:
                         comp_id = res.data[0]['id']
 
-                        # Guardar detalle de productos
+                        # 2. Guardar el detalle de items y descontar stock
                         for item in st.session_state.carrito:
                             det = {
                                 "comprobante_id": comp_id,
@@ -363,15 +456,14 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                             supabase.table("productos").update({"stock": nuevo_stk}).eq("id", item['id']).execute()
 
                         st.balloons()
-                        st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito! Stock descontado.")
+                        st.success(f"🎉 ¡{tipo_doc} {correlativo_final} emitida con éxito! Stock actualizado.")
                         st.session_state.carrito = []
                         st.rerun()
                     else:
                         st.error("⚠️ La base de datos no devolvió respuesta al guardar el comprobante.")
                         
                 except Exception as e:
-                    # Atrapa el error y lo muestra claramente en pantalla
-                    st.error(f"❌ Error al guardar en la base de datos: {str(e)}")
+                    st.error(f"❌ Error al procesar la venta: {str(e)}")
 # -------------------------------------------------------------------
 # 6. DEVOLUCIONES
 # -------------------------------------------------------------------
