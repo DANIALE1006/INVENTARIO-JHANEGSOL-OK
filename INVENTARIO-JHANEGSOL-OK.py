@@ -179,11 +179,12 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
         st.warning("⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor registrados.")
 
 import io
+import io
 
 # -------------------------------------------------------------------
 # 5. VENTAS Y EMISIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
-elif menu == "🧾 Ventas y Emisión de Comprobantes":
+if menu == "🧾 Ventas y Emisión de Comprobantes":
     st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Tickets")
 
     # Inicializar carrito si no existe
@@ -412,7 +413,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                 st.rerun()
 
         with b_col2:
-            # Botón para descargar el Comprobante/Ticket en formato HTML (para imprimir o guardar)
             st.download_button(
                 label="📥 DESCARGAR COMPROBANTE (HTML)",
                 data=html_preview,
