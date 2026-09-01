@@ -412,12 +412,13 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
                     "Cantidad que Ingresa", min_value=1, value=1
                 )
             with c3:
+                costo_defecto = float(dict_prods[prod_sel]["costo"]) if dict_prods[prod_sel]["costo"] is not None else 0.0
                 nuevo_costo = st.number_input(
                     "Costo Unitario Compra (S/.)",
                     min_value=0.0,
-                    value=float(dict_prods[prod_sel]["costo"] or 0.0),
+                    value=costo_defecto,
                 )
-                fecha_compra = st.date_input("Fecha de Ingreso", datetime.now())
+                fecha_compra = st.date_input("Fecha de Ingreso", datetime.now().date())
 
             if st.form_submit_button("📥 Registrar Ingreso y Aumentar Stock"):
                 prod_info = dict_prods[prod_sel]
@@ -441,6 +442,7 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
             "⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor"
             " registrados en el sistema."
         )
+
 # -------------------------------------------------------------------
 # 5. VENTAS Y EMISIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
@@ -507,8 +509,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     }
                     ejecutar_consulta("clientes", "insert", data)
                     st.success(f"✅ Cliente {nuevo_nom.upper()} registrado.")
-                    cliente_nom = nuevo_nom.upper()
-                    cliente_doc = nuevo_doc
                     st.rerun()
 
     st.divider()
@@ -537,7 +537,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         else:
             prefijo = "B001"
 
-        # --- LÓGICA CORREGIDA PARA CÁLCULO DE CORRELATIVO ---
         ult_comps = ejecutar_consulta(
             "comprobantes",
             consulta_type="select",
@@ -553,7 +552,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                 val = c.get("serie_numero", "")
                 if "-" in val:
                     try:
-                        # Extrae la parte numérica tras el guión (ej: "B001-000003" -> 3)
                         num = int(val.split("-")[1])
                         numeros.append(num)
                     except ValueError:
@@ -705,6 +703,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida con éxito!")
                     st.session_state.carrito = []
                     st.rerun()
+
 # -------------------------------------------------------------------
 # 6. DEVOLUCIONES
 # -------------------------------------------------------------------
@@ -726,7 +725,7 @@ elif menu == "🔄 Devoluciones":
             ],
         )
     with col2:
-        fecha_emision = st.date_input("Fecha", datetime.now())
+        fecha_emision = st.date_input("Fecha", datetime.now().date())
         motivo = st.text_area("Motivo de Devolución *")
 
     prods = ejecutar_consulta(
