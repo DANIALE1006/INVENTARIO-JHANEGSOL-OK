@@ -179,7 +179,6 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
         st.warning("⚠️ Asegúrate de tener al menos 1 producto y 1 proveedor registrados.")
 
 import io
-import io
 
 # -------------------------------------------------------------------
 # 5. VENTAS Y EMISIÓN DE COMPROBANTES
@@ -362,6 +361,11 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
     <title>{tipo_doc} {serie_num}</title>
 </head>
 <body style="background-color: #f0f2f5; font-family: 'Courier New', Courier, monospace; margin: 0; padding: 10px;">
+    <div style="text-align: center; margin-bottom: 10px;">
+        <button onclick="descargarTicket()" style="background-color: #008CBA; color: white; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+            📥 DESCARGAR / IMPRIMIR COMPROBANTE
+        </button>
+    </div>
     <div id="ticket-print" style="max-width: 380px; margin: 0 auto; padding: 20px; border: 2px dashed #333; background-color: #ffffff; color: #000000; font-size: 13px;">
         <div style="text-align: center; margin-bottom: 10px;">
             <h3 style="margin: 0; font-size: 18px; color: #000;">JHANEGSOL S.A.C.</h3>
@@ -397,15 +401,27 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
             <p style="margin: 2px 0;">¡Gracias por su compra en JHANEGSOL S.A.C.!</p>
         </div>
     </div>
+    <script>
+    function descargarTicket() {{
+        var contenido = document.documentElement.outerHTML;
+        var blob = new Blob([contenido], {{ type: 'text/html' }});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'Comprobante_{tipo_doc.replace(" ", "_")}_{serie_num}.html';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }}
+    </script>
 </body>
 </html>
 """
 
         # Renderizar la vista previa visual
-        st.components.v1.html(html_preview, height=450, scrolling=True)
+        st.components.v1.html(html_preview, height=500, scrolling=True)
 
         # Botones de Acción
-        b_col1, b_col2, b_col3 = st.columns(3)
+        b_col1, b_col2 = st.columns(2)
         
         with b_col1:
             if st.button("🔴 Vaciar Selección", use_container_width=True):
@@ -413,15 +429,6 @@ if menu == "🧾 Ventas y Emisión de Comprobantes":
                 st.rerun()
 
         with b_col2:
-            st.download_button(
-                label="📥 DESCARGAR COMPROBANTE (HTML)",
-                data=html_preview,
-                file_name=f"Comprobante_{tipo_doc.replace(' ', '_')}_{serie_num}.html",
-                mime="text/html",
-                use_container_width=True
-            )
-
-        with b_col3:
             if st.button(f"🖨️ EMITIR {tipo_doc} Y DESCONTAR STOCK", type="primary", use_container_width=True):
                 try:
                     # Validar e incrementar automáticamente si la serie y número ya existen
