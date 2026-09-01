@@ -71,7 +71,7 @@ def ejecutar_consulta(
 if "carrito" not in st.session_state:
     st.session_state.carrito = []
 
-# --- FUNCIÓN GENERADORA DE PDF ---
+# --- GENERADOR DE PDF ---
 def generar_pdf_comprobante(
     tipo_doc,
     serie_num,
@@ -86,12 +86,7 @@ def generar_pdf_comprobante(
 ):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
-        buffer,
-        pagesize=A4,
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30,
+        buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
     )
     story = []
     styles = getSampleStyleSheet()
@@ -121,7 +116,7 @@ def generar_pdf_comprobante(
         [Paragraph(f"<b>DNI / RUC:</b> {cliente_doc}", normal_style)],
         [Paragraph(f"<b>Fecha de Emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", normal_style)],
     ]
-    
+
     if doc_referencia:
         datos_cliente.append([Paragraph(f"<b>Comprobante Afectado:</b> {doc_referencia}", normal_style)])
     if motivo:
@@ -142,7 +137,7 @@ def generar_pdf_comprobante(
         cant = item.get("cantidad", 0)
         pu = item.get("precio_unitario", item.get("precio", 0.0))
         sub = cant * pu
-        
+
         data_tabla.append([
             Paragraph(str(cant), normal_style),
             Paragraph(desc, normal_style),
@@ -336,30 +331,10 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
                     st.rerun()
 
 # -------------------------------------------------------------------
-# 5. VENTAS Y EMISIÓN DE COMPROBANTES
+# 5. VENTAS Y EMISIÓN DE COMPROBANTES (CON CARGA DE PRODUCTOS DE NOTAS)
 # -------------------------------------------------------------------
 elif menu == "🧾 Ventas y Emisión de Comprobantes":
     st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Notas")
-
-    res_clientes_v = ejecutar_consulta("clientes")
-    df_cli_v = pd.DataFrame(res_clientes_v) if res_clientes_v else pd.DataFrame()
-
-    opcion_cliente = st.radio(
-        "Tipo de Cliente",
-        ["Cliente Genérico (Varios)", "Seleccionar Cliente Registrado"],
-        horizontal=True,
-    )
-
-    cliente_nom = "CLIENTE VARIOS"
-    cliente_doc = "00000000"
-
-    if opcion_cliente == "Seleccionar Cliente Registrado" and not df_cli_v.empty:
-        cliente_sel = st.selectbox("Buscar Cliente Frecuente", df_cli_v["nombre"].tolist())
-        datos_c = df_cli_v[df_cli_v["nombre"] == cliente_sel].iloc[0]
-        cliente_nom = datos_c["nombre"]
-        cliente_doc = datos_c["ruc_dni"]
-
-    st.divider()
 
     c1, c2 = st.columns(2)
     with c1:
@@ -400,76 +375,145 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         sugerido = f"{prefijo}-{siguiente_num:06d}"
         serie_num = st.text_input("Serie y Número Comprobante", value=sugerido)
 
-    with c2:
-        doc_ref = ""
-        motivo_nota = ""
-        cat_motivo = ""
+    # DATOS DE CLIENTE SEGÚN TIPO
+    es_nota = "NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc
 
-        if "NOTA DE CRÉDITO" in tipo_doc:
-            st.info("ℹ️ Emitida para disminuir, ajustar o anular una factura/boleta previa (reingresa stock por devolución).")
-            doc_ref = st.text_input("N° de Factura/Boleta que modifica *", placeholder="Ej: F001-000005")
-            cat_motivo = st.selectbox(
-                "Motivo de la Nota de Crédito *",
-                ["Anulación de la Operación", "Devolución por Defecto de Fábrica", "Devolución por Error en Pedido", "Descuento / Ajuste de Precio"],
-            )
-            motivo_nota = st.text_area("Detalle / Observaciones de la Devolución *")
+    if not es_nota:
+        res_clientes_v = ejecutar_consulta("clientes")
+        df_cli_v = pd.DataFrame(res_clientes_v) if res_clientes_v else pd.DataFrame()
 
-        elif "NOTA DE DÉBITO" in tipo_doc:
-            st.info("ℹ️ Emitida para aumentar el monto de una factura/boleta previa (intereses, mora o ajuste sin afectar stock).")
-            doc_ref = st.text_input("N° de Factura/Boleta que modifica *", placeholder="Ej: F001-000005")
-            cat_motivo = st.selectbox(
-                "Motivo de la Nota de Débito *",
-                ["Intereses por Mora", "Aumento en el Valor / Cambio de Precio", "Penalidades / Gastos Adicionales"],
-            )
-            motivo_nota = st.text_area("Detalle del Cobro Adicional *")
+        opcion_cliente = st.radio(
+            "Tipo de Cliente", ["Cliente Genérico (Varios)", "Seleccionar Cliente Registrado"], horizontal=True
+        )
+        cliente_nom = "CLIENTE VARIOS"
+        cliente_doc = "00000000"
 
-    prods = ejecutar_consulta("productos", consulta_type="select", data="id, codigo, descripcion, precio, stock")
-    if prods:
-        dict_prods = {f"{p['codigo']} | {p['descripcion']} (Stock: {p['stock']})": p for p in prods}
+        if opcion_cliente == "Seleccionar Cliente Registrado" and not df_cli_v.empty:
+            cliente_sel = st.selectbox("Buscar Cliente Frecuente", df_cli_v["nombre"].tolist())
+            datos_c = df_cli_v[df_cli_v["nombre"] == cliente_sel].iloc[0]
+            cliente_nom = datos_c["nombre"]
+            cliente_doc = datos_c["ruc_dni"]
 
-        cp1, cp2, cp3 = st.columns([3, 1, 1])
-        with cp1:
-            p_sel_key = st.selectbox("Buscar Producto / Concepto", list(dict_prods.keys()))
-        with cp2:
-            cant_v = st.number_input("Cantidad", min_value=1, value=1)
-        with cp3:
-            st.write("")
-            st.write("")
-            if st.button("➕ Agregar"):
-                p_info = dict_prods[p_sel_key]
+    doc_ref = ""
+    motivo_nota = ""
+    cat_motivo = ""
 
-                # VALIDACIÓN DE STOCK ESTRICTA
-                es_nota = "NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc
-                if not es_nota and p_info["stock"] <= 0:
-                    st.error("❌ El producto no tiene stock disponible para venta.")
-                elif not es_nota and cant_v > p_info["stock"]:
-                    st.error(f"⚠️ La cantidad supera el stock disponible ({p_info['stock']} unidades).")
+    # SECCIÓN EXCLUSIVA PARA NOTAS: BUSCAR Y CARGAR PRODUCTOS DEL COMPROBANTE ORIGINAL
+    if es_nota:
+        with c2:
+            st.info("🔎 Cargar comprobante original para modificar:")
+            comps_origen = ejecutar_consulta("comprobantes", order_col="id", desc=True)
+
+            if comps_origen:
+                dict_comps_orig = {
+                    f"{c['serie_numero']} - {c['cliente_nombre']} (Total: S/. {c['total']})": c for c in comps_origen
+                }
+                comp_afectado_sel = st.selectbox(
+                    "Seleccione la Boleta/Factura Afectada *", list(dict_comps_orig.keys())
+                )
+                obj_comp_origen = dict_comps_orig[comp_afectado_sel]
+
+                doc_ref = obj_comp_origen["serie_numero"]
+                cliente_nom = obj_comp_origen["cliente_nombre"]
+                cliente_doc = obj_comp_origen["cliente_documento"]
+
+                if "NOTA DE CRÉDITO" in tipo_doc:
+                    cat_motivo = st.selectbox(
+                        "Motivo de la Nota de Crédito *",
+                        [
+                            "Anulación de la Operación",
+                            "Devolución por Defecto de Fábrica",
+                            "Devolución por Error en Pedido",
+                            "Descuento / Ajuste de Precio",
+                        ],
+                    )
                 else:
-                    st.session_state.carrito.append({
-                        "id": p_info["id"],
-                        "codigo": p_info["codigo"],
-                        "descripcion": p_info["descripcion"],
-                        "cantidad": cant_v,
-                        "precio_unitario": p_info["precio"],
-                        "subtotal": cant_v * p_info["precio"],
-                    })
-                    st.success("✅ Agregado")
-                    st.rerun()
+                    cat_motivo = st.selectbox(
+                        "Motivo de la Nota de Débito *",
+                        ["Intereses por Mora", "Aumento en el Valor / Cambio de Precio", "Penalidades / Gastos Adicionales"],
+                    )
 
+                motivo_nota = st.text_area("Detalle / Observaciones del Ajuste *")
+
+                if st.button("📥 Importar Productos del Comprobante"):
+                    detalles_orig = (
+                        supabase.table("detalle_comprobante")
+                        .select("producto_id, cantidad, precio_unitario, productos(id, codigo, descripcion)")
+                        .eq("comprobante_id", obj_comp_origen["id"])
+                        .execute()
+                        .data
+                    )
+
+                    if detalles_orig:
+                        st.session_state.carrito = []
+                        for d in detalles_orig:
+                            p = d.get("productos") or {}
+                            st.session_state.carrito.append({
+                                "id": d["producto_id"],
+                                "codigo": p.get("codigo", "N/A"),
+                                "descripcion": p.get("descripcion", "Producto"),
+                                "cantidad": d["cantidad"],
+                                "precio_unitario": float(d["precio_unitario"]),
+                                "subtotal": float(d["cantidad"] * d["precio_unitario"]),
+                            })
+                        st.success("✅ Productos importados al carrito. Puedes editar las cantidades abajo.")
+                        st.rerun()
+
+    # AGREGAR PRODUCTOS MANUALMENTE (PARA VENTAS NORMALES O CONCEPTOS EXTRA)
+    if not es_nota:
+        st.divider()
+        prods = ejecutar_consulta("productos", consulta_type="select", data="id, codigo, descripcion, precio, stock")
+        if prods:
+            dict_prods = {f"{p['codigo']} | {p['descripcion']} (Stock: {p['stock']})": p for p in prods}
+            cp1, cp2, cp3 = st.columns([3, 1, 1])
+            with cp1:
+                p_sel_key = st.selectbox("Buscar Producto / Concepto", list(dict_prods.keys()))
+            with cp2:
+                cant_v = st.number_input("Cantidad", min_value=1, value=1)
+            with cp3:
+                st.write("")
+                st.write("")
+                if st.button("➕ Agregar"):
+                    p_info = dict_prods[p_sel_key]
+                    if p_info["stock"] <= 0:
+                        st.error("❌ El producto no tiene stock disponible.")
+                    elif cant_v > p_info["stock"]:
+                        st.error(f"⚠️ Cantidad supera el stock actual ({p_info['stock']}).")
+                    else:
+                        st.session_state.carrito.append({
+                            "id": p_info["id"],
+                            "codigo": p_info["codigo"],
+                            "descripcion": p_info["descripcion"],
+                            "cantidad": cant_v,
+                            "precio_unitario": p_info["precio"],
+                            "subtotal": cant_v * p_info["precio"],
+                        })
+                        st.success("✅ Agregado")
+                        st.rerun()
+
+    # CARRITO DE PRODUCTOS Y EDICIÓN
     if st.session_state.carrito:
-        st.subheader("📋 Detalle del Comprobante")
-        df_car = pd.DataFrame(st.session_state.carrito)
-        
-        # Opción para limpiar la lista
-        if st.button("🗑️ Vaciar Carrito"):
+        st.subheader("📋 Detalle del Comprobante a Emitir")
+
+        # Permite ajustar cantidades directamente para devoluciones parciales
+        for idx, item in enumerate(st.session_state.carrito):
+            col_d1, col_d2, col_d3, col_d4 = st.columns([3, 1, 1, 1])
+            col_d1.write(f"**{item['codigo']}** - {item['descripcion']}")
+            nueva_cant = col_d2.number_input(
+                "Cant.", min_value=1, value=int(item["cantidad"]), key=f"cant_{idx}"
+            )
+            col_d3.write(f"P.U: S/. {item['precio_unitario']:.2f}")
+
+            # Recalcular subtotal
+            st.session_state.carrito[idx]["cantidad"] = nueva_cant
+            st.session_state.carrito[idx]["subtotal"] = nueva_cant * item["precio_unitario"]
+            col_d4.write(f"Subtotal: S/. {st.session_state.carrito[idx]['subtotal']:.2f}")
+
+        if st.button("🗑️ Vaciar Lista"):
             st.session_state.carrito = []
             st.rerun()
 
-        st.dataframe(
-            df_car[["codigo", "descripcion", "cantidad", "precio_unitario", "subtotal"]], use_container_width=True
-        )
-
-        total_gen = float(df_car["subtotal"].sum())
+        total_gen = sum(float(i["subtotal"]) for i in st.session_state.carrito)
         subtotal = total_gen / 1.18
         igv = total_gen - subtotal
 
@@ -481,15 +525,15 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         st.divider()
 
         valido = True
-        if ("NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc) and (not doc_ref or not motivo_nota):
-            st.error("⚠️ El número de comprobante afectado y la justificación son obligatorios para emitir la Nota.")
+        if es_nota and (not doc_ref or not motivo_nota):
+            st.error("⚠️ Debe seleccionar un comprobante de origen y especificar el motivo del ajuste.")
             valido = False
 
         if valido:
             if "NOTA DE CRÉDITO" in tipo_doc:
-                lbl_btn = f"🖨️ EMITIR {tipo_doc} Y 🟢 AUMENTAR STOCK (+)"
+                lbl_btn = f"🖨️ EMITIR NOTA DE CRÉDITO Y 🟢 AUMENTAR STOCK (+{sum(i['cantidad'] for i in st.session_state.carrito)})"
             elif "NOTA DE DÉBITO" in tipo_doc:
-                lbl_btn = f"🖨️ EMITIR {tipo_doc} (AUMENTAR MONTO COBRADO)"
+                lbl_btn = f"🖨️ EMITIR NOTA DE DÉBITO (AJUSTAR COBRO)"
             else:
                 lbl_btn = f"🖨️ EMITIR {tipo_doc} Y 🔴 DESCONTAR STOCK (-)"
 
@@ -517,14 +561,26 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         }
                         ejecutar_consulta("detalle_comprobante", "insert", det)
 
-                        # CORRECCIÓN DE AUMENTO DE STOCK EN NOTAS DE CRÉDITO
+                        # LOGICA GARANTIZADA DE AUMENTO DE STOCK PARA NOTAS DE CRÉDITO
                         if "NOTA DE CRÉDITO" in tipo_doc:
-                            prod_bd = ejecutar_consulta("productos", consulta_type="select", data="stock", eq_col="id", eq_val=item["id"])
-                            if prod_bd and len(prod_bd) > 0:
-                                stock_actual = prod_bd[0]["stock"] or 0
-                                nuevo_stk = stock_actual + item["cantidad"]
-                                ejecutar_consulta("productos", "update", data={"stock": nuevo_stk}, eq_col="id", eq_val=item["id"])
+                            # 1. Obtener el stock real actual
+                            res_prod = (
+                                supabase.table("productos")
+                                .select("stock")
+                                .eq("id", item["id"])
+                                .execute()
+                            )
+                            if res_prod.data and len(res_prod.data) > 0:
+                                stock_actual = int(res_prod.data[0]["stock"] or 0)
+                                cantidad_devolucion = int(item["cantidad"])
+                                stock_aumentado = stock_actual + cantidad_devolucion
 
+                                # 2. Actualizar el stock
+                                supabase.table("productos").update({"stock": stock_aumentado}).eq(
+                                    "id", item["id"]
+                                ).execute()
+
+                            # 3. Registrar en cuadro de devoluciones
                             reg_dev = {
                                 "numero_boleta": f"{serie_num} (Afecta: {doc_ref})",
                                 "producto_id": item["id"],
@@ -538,13 +594,23 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                             pass
 
                         else:
-                            prod_bd = ejecutar_consulta("productos", consulta_type="select", data="stock", eq_col="id", eq_val=item["id"])
-                            if prod_bd and len(prod_bd) > 0:
-                                stock_actual = prod_bd[0]["stock"] or 0
-                                nuevo_stk = stock_actual - item["cantidad"]
-                                ejecutar_consulta("productos", "update", data={"stock": nuevo_stk}, eq_col="id", eq_val=item["id"])
+                            # Descontar Stock en Ventas Normales
+                            res_prod = (
+                                supabase.table("productos")
+                                .select("stock")
+                                .eq("id", item["id"])
+                                .execute()
+                            )
+                            if res_prod.data and len(res_prod.data) > 0:
+                                stock_actual = int(res_prod.data[0]["stock"] or 0)
+                                cantidad_venta = int(item["cantidad"])
+                                stock_reducido = stock_actual - cantidad_venta
 
-                    # GENERACIÓN DE PDF Y PREVISUALIZACIÓN
+                                supabase.table("productos").update({"stock": stock_reducido}).eq(
+                                    "id", item["id"]
+                                ).execute()
+
+                    # COMPROBANTE GENERADO EN PDF
                     pdf_bytes = generar_pdf_comprobante(
                         tipo_doc,
                         serie_num,
@@ -559,7 +625,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     )
 
                     st.balloons()
-                    st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida correctamente!")
+                    st.success(f"🎉 ¡{tipo_doc} {serie_num} procesada con éxito!")
 
                     st.download_button(
                         label="📄 Descargar Comprobante PDF",
@@ -592,10 +658,17 @@ elif menu == "📊 Histórico de Comprobantes":
             datos_comp = next((c for c in comps if c["serie_numero"] == serie_sel), None)
 
             if datos_comp:
-                st.write(f"**Tipo:** {datos_comp.get('tipo_comprobante')} | **Cliente:** {datos_comp.get('cliente_nombre')} | **Doc:** {datos_comp.get('cliente_documento')}")
+                st.write(
+                    f"**Tipo:** {datos_comp.get('tipo_comprobante')} | **Cliente:** {datos_comp.get('cliente_nombre')} | **Doc:** {datos_comp.get('cliente_documento')}"
+                )
 
-                # CONSULTA CON DETALLE DE PRODUCTOS QUE COMPRARON
-                detalles = supabase.table("detalle_comprobante").select("cantidad, precio_unitario, productos(codigo, descripcion)").eq("comprobante_id", datos_comp["id"]).execute().data
+                detalles = (
+                    supabase.table("detalle_comprobante")
+                    .select("cantidad, precio_unitario, productos(codigo, descripcion)")
+                    .eq("comprobante_id", datos_comp["id"])
+                    .execute()
+                    .data
+                )
 
                 if detalles:
                     items_render = []
@@ -611,7 +684,6 @@ elif menu == "📊 Histórico de Comprobantes":
 
                     st.table(pd.DataFrame(items_render))
 
-                    # GENERACIÓN Y DESCARGA EN PDF
                     pdf_hist = generar_pdf_comprobante(
                         datos_comp.get("tipo_comprobante", "COMPROBANTE"),
                         datos_comp.get("serie_numero", "000"),
