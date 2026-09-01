@@ -71,6 +71,115 @@ def ejecutar_consulta(
 if "carrito" not in st.session_state:
     st.session_state.carrito = []
 
+# --- FUNCIÓN GENERADORA DE PDF ---
+def generar_pdf_comprobante(
+    tipo_doc,
+    serie_num,
+    cliente_nom,
+    cliente_doc,
+    items,
+    subtotal,
+    igv,
+    total_gen,
+    doc_referencia="",
+    motivo="",
+):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30,
+    )
+    story = []
+    styles = getSampleStyleSheet()
+
+    titulo_style = ParagraphStyle(
+        "Titulo", parent=styles["Heading1"], alignment=1, fontSize=16, leading=20, fontName="Helvetica-Bold"
+    )
+    subtitulo_style = ParagraphStyle("SubTitulo", parent=styles["Normal"], alignment=1, fontSize=10, leading=12)
+    comprobante_style = ParagraphStyle(
+        "Comp", parent=styles["Heading2"], alignment=1, fontSize=12, leading=15, fontName="Helvetica-Bold"
+    )
+    normal_style = styles["Normal"]
+    derecha_style = ParagraphStyle("Derecha", parent=styles["Normal"], alignment=2)
+    bold_derecha = ParagraphStyle("BoldDerecha", parent=styles["Normal"], alignment=2, fontName="Helvetica-Bold")
+
+    story.append(Paragraph("JHANEGSOL S.A.C.", titulo_style))
+    story.append(Paragraph("RUC: 20600000001", subtitulo_style))
+    story.append(Paragraph("Oficina Principal - Huacho, Lima - Perú", subtitulo_style))
+    story.append(Spacer(1, 15))
+
+    story.append(Paragraph(f"<b>{tipo_doc}</b>", comprobante_style))
+    story.append(Paragraph(f"<b>N° {serie_num}</b>", comprobante_style))
+    story.append(Spacer(1, 10))
+
+    datos_cliente = [
+        [Paragraph(f"<b>Cliente:</b> {cliente_nom}", normal_style)],
+        [Paragraph(f"<b>DNI / RUC:</b> {cliente_doc}", normal_style)],
+        [Paragraph(f"<b>Fecha de Emisión:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}", normal_style)],
+    ]
+    
+    if doc_referencia:
+        datos_cliente.append([Paragraph(f"<b>Comprobante Afectado:</b> {doc_referencia}", normal_style)])
+    if motivo:
+        datos_cliente.append([Paragraph(f"<b>Motivo / Concepto:</b> {motivo}", normal_style)])
+
+    story.append(Table(datos_cliente, colWidths=[500]))
+    story.append(Spacer(1, 15))
+
+    data_tabla = [[
+        Paragraph("<b>Cant.</b>", normal_style),
+        Paragraph("<b>Descripción</b>", normal_style),
+        Paragraph("<b>P. Unit (S/.)</b>", derecha_style),
+        Paragraph("<b>Subtotal (S/.)</b>", derecha_style),
+    ]]
+
+    for item in items:
+        desc = item.get("descripcion") or item.get("productos", {}).get("descripcion", "Producto")
+        cant = item.get("cantidad", 0)
+        pu = item.get("precio_unitario", item.get("precio", 0.0))
+        sub = cant * pu
+        
+        data_tabla.append([
+            Paragraph(str(cant), normal_style),
+            Paragraph(desc, normal_style),
+            Paragraph(f"{pu:.2f}", derecha_style),
+            Paragraph(f"{sub:.2f}", derecha_style),
+        ])
+
+    tabla_prod = Table(data_tabla, colWidths=[50, 270, 90, 90])
+    tabla_prod.setStyle(
+        TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f2f5")),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.5, colors.HexColor("#CCCCCC")),
+            ("LINEABOVE", (0, 0), (-1, 0), 1, colors.black),
+            ("LINEBELOW", (0, 0), (-1, 0), 1, colors.black),
+        ])
+    )
+    story.append(tabla_prod)
+    story.append(Spacer(1, 15))
+
+    data_totales = [
+        [Paragraph("Op. Gravada:", derecha_style), Paragraph(f"S/. {subtotal:.2f}", derecha_style)],
+        [Paragraph("IGV (18%):", derecha_style), Paragraph(f"S/. {igv:.2f}", derecha_style)],
+        [Paragraph("<b>TOTAL:</b>", bold_derecha), Paragraph(f"<b>S/. {total_gen:.2f}</b>", bold_derecha)],
+    ]
+    tabla_totales = Table(data_totales, colWidths=[400, 100])
+    tabla_totales.setStyle(TableStyle([("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 4)]))
+    story.append(tabla_totales)
+    story.append(Spacer(1, 20))
+
+    story.append(Paragraph("¡Gracias por su preferencia en JHANEGSOL S.A.C.!", subtitulo_style))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer
+
 # --- INTERFAZ PRINCIPAL ---
 st.title("📦 Sistema Comercial, Inventarios y Facturación - Jhanegsol")
 
@@ -329,7 +438,13 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
             if st.button("➕ Agregar"):
                 p_info = dict_prods[p_sel_key]
 
-                if "NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc or cant_v <= p_info["stock"]:
+                # VALIDACIÓN DE STOCK ESTRICTA
+                es_nota = "NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc
+                if not es_nota and p_info["stock"] <= 0:
+                    st.error("❌ El producto no tiene stock disponible para venta.")
+                elif not es_nota and cant_v > p_info["stock"]:
+                    st.error(f"⚠️ La cantidad supera el stock disponible ({p_info['stock']} unidades).")
+                else:
                     st.session_state.carrito.append({
                         "id": p_info["id"],
                         "codigo": p_info["codigo"],
@@ -340,12 +455,16 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     })
                     st.success("✅ Agregado")
                     st.rerun()
-                else:
-                    st.error("⚠️ La cantidad supera el stock disponible.")
 
     if st.session_state.carrito:
         st.subheader("📋 Detalle del Comprobante")
         df_car = pd.DataFrame(st.session_state.carrito)
+        
+        # Opción para limpiar la lista
+        if st.button("🗑️ Vaciar Carrito"):
+            st.session_state.carrito = []
+            st.rerun()
+
         st.dataframe(
             df_car[["codigo", "descripcion", "cantidad", "precio_unitario", "subtotal"]], use_container_width=True
         )
@@ -398,15 +517,14 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         }
                         ejecutar_consulta("detalle_comprobante", "insert", det)
 
-                        # LOGICA DE STOCK SEGÚN TIPO DE COMPROBANTE
+                        # CORRECCIÓN DE AUMENTO DE STOCK EN NOTAS DE CRÉDITO
                         if "NOTA DE CRÉDITO" in tipo_doc:
-                            # Aumenta stock por devolución o anulación
                             prod_bd = ejecutar_consulta("productos", consulta_type="select", data="stock", eq_col="id", eq_val=item["id"])
-                            if prod_bd:
-                                nuevo_stk = prod_bd[0]["stock"] + item["cantidad"]
+                            if prod_bd and len(prod_bd) > 0:
+                                stock_actual = prod_bd[0]["stock"] or 0
+                                nuevo_stk = stock_actual + item["cantidad"]
                                 ejecutar_consulta("productos", "update", data={"stock": nuevo_stk}, eq_col="id", eq_val=item["id"])
 
-                            # Registro de devolución para panel estadístico
                             reg_dev = {
                                 "numero_boleta": f"{serie_num} (Afecta: {doc_ref})",
                                 "producto_id": item["id"],
@@ -417,32 +535,103 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                             ejecutar_consulta("devoluciones", "insert", reg_dev)
 
                         elif "NOTA DE DÉBITO" in tipo_doc:
-                            # Ajuste de cobro, no altera el stock físico
                             pass
 
                         else:
-                            # Boleta/Factura/Ticket -> Disminuye stock por venta
                             prod_bd = ejecutar_consulta("productos", consulta_type="select", data="stock", eq_col="id", eq_val=item["id"])
-                            if prod_bd:
-                                nuevo_stk = prod_bd[0]["stock"] - item["cantidad"]
+                            if prod_bd and len(prod_bd) > 0:
+                                stock_actual = prod_bd[0]["stock"] or 0
+                                nuevo_stk = stock_actual - item["cantidad"]
                                 ejecutar_consulta("productos", "update", data={"stock": nuevo_stk}, eq_col="id", eq_val=item["id"])
+
+                    # GENERACIÓN DE PDF Y PREVISUALIZACIÓN
+                    pdf_bytes = generar_pdf_comprobante(
+                        tipo_doc,
+                        serie_num,
+                        cliente_nom,
+                        cliente_doc,
+                        st.session_state.carrito,
+                        subtotal,
+                        igv,
+                        total_gen,
+                        doc_referencia=doc_ref,
+                        motivo=motivo_nota,
+                    )
 
                     st.balloons()
                     st.success(f"🎉 ¡{tipo_doc} {serie_num} emitida correctamente!")
+
+                    st.download_button(
+                        label="📄 Descargar Comprobante PDF",
+                        data=pdf_bytes,
+                        file_name=f"{serie_num}.pdf",
+                        mime="application/pdf",
+                    )
+
                     st.session_state.carrito = []
-                    st.rerun()
 
 # -------------------------------------------------------------------
-# 6. HISTÓRICO DE COMPROBANTES
+# 6. HISTÓRICO DE COMPROBANTES CON DETALLE Y PREVISUALIZACIÓN PDF
 # -------------------------------------------------------------------
 elif menu == "📊 Histórico de Comprobantes":
     st.header("📊 Histórico General de Comprobantes Emitidos")
-    comps = ejecutar_consulta("comprobantes")
+    comps = ejecutar_consulta("comprobantes", order_col="id", desc=True)
+
     if comps:
-        st.dataframe(pd.DataFrame(comps), use_container_width=True)
+        df_comps = pd.DataFrame(comps)
+        st.dataframe(df_comps, use_container_width=True)
+
+        st.divider()
+        st.subheader("🔍 Detalle de Productos y Previsualización de Comprobante")
+
+        lista_num = [f"{c['serie_numero']} - {c['cliente_nombre']} (S/. {c['total']})" for c in comps]
+        comp_sel = st.selectbox("Seleccione Comprobante para Inspeccionar / Descargar PDF", lista_num)
+
+        if comp_sel:
+            serie_sel = comp_sel.split(" - ")[0]
+            datos_comp = next((c for c in comps if c["serie_numero"] == serie_sel), None)
+
+            if datos_comp:
+                st.write(f"**Tipo:** {datos_comp.get('tipo_comprobante')} | **Cliente:** {datos_comp.get('cliente_nombre')} | **Doc:** {datos_comp.get('cliente_documento')}")
+
+                # CONSULTA CON DETALLE DE PRODUCTOS QUE COMPRARON
+                detalles = supabase.table("detalle_comprobante").select("cantidad, precio_unitario, productos(codigo, descripcion)").eq("comprobante_id", datos_comp["id"]).execute().data
+
+                if detalles:
+                    items_render = []
+                    for d in detalles:
+                        prod_info = d.get("productos") or {}
+                        items_render.append({
+                            "Código": prod_info.get("codigo", "N/A"),
+                            "Descripción": prod_info.get("descripcion", "Producto"),
+                            "Cantidad": d["cantidad"],
+                            "Precio Unit.": f"S/. {d['precio_unitario']:.2f}",
+                            "Subtotal": f"S/. {d['cantidad'] * d['precio_unitario']:.2f}",
+                        })
+
+                    st.table(pd.DataFrame(items_render))
+
+                    # GENERACIÓN Y DESCARGA EN PDF
+                    pdf_hist = generar_pdf_comprobante(
+                        datos_comp.get("tipo_comprobante", "COMPROBANTE"),
+                        datos_comp.get("serie_numero", "000"),
+                        datos_comp.get("cliente_nombre", "CLIENTE"),
+                        datos_comp.get("cliente_documento", "000"),
+                        detalles,
+                        float(datos_comp.get("subtotal", 0)),
+                        float(datos_comp.get("igv", 0)),
+                        float(datos_comp.get("total", 0)),
+                    )
+
+                    st.download_button(
+                        label=f"📥 Descargar PDF {datos_comp['serie_numero']}",
+                        data=pdf_hist,
+                        file_name=f"{datos_comp['serie_numero']}.pdf",
+                        mime="application/pdf",
+                    )
 
 # -------------------------------------------------------------------
-# 7. ESTADÍSTICAS Y MÉTRICAS DE NEGOCIO (INCLUYE TODAS TUS ESTADÍSTICAS)
+# 7. ESTADÍSTICAS Y MÉTRICAS DE NEGOCIO
 # -------------------------------------------------------------------
 elif menu == "📈 Estadísticas y Métricas de Negocio":
     st.header("📈 Panel Consolidado de Estadísticas e Inteligencia")
@@ -451,17 +640,15 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
         "⚠️ Alerta de Quiebre de Stock",
         "🔥 Productos con Más Salida",
         "🏷️ Mejor Proveedor (Menor Precio)",
-        "🔄 Cuadro Estadístico de Devoluciones"
+        "🔄 Cuadro Estadístico de Devoluciones",
     ])
 
-    # --- TAB 1: AVISO / QUIEBRE DE STOCK ---
     with tab1:
         st.subheader("🚨 Control de Agotamiento y Stock Mínimo")
         prods_stk = ejecutar_consulta("productos")
 
         if prods_stk:
             df_stk = pd.DataFrame(prods_stk)
-            # Productos por debajo o igual al stock mínimo
             df_criticos = df_stk[df_stk["stock"] <= df_stk["stock_minimo"]]
 
             m1, m2, m3 = st.columns(3)
@@ -473,12 +660,11 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
                 st.error("⚠️ Atención: Los siguientes productos requieren reabastecimiento urgente:")
                 st.dataframe(
                     df_criticos[["codigo", "marca", "descripcion", "stock", "stock_minimo"]],
-                    use_container_width=True
+                    use_container_width=True,
                 )
             else:
                 st.success("✅ Todos los productos se encuentran por encima del nivel de stock mínimo.")
 
-    # --- TAB 2: PRODUCTOS CON MÁS SALIDA ---
     with tab2:
         st.subheader("🔥 Top Productos Más Vendidos")
         detalles = ejecutar_consulta("detalle_comprobante")
@@ -488,17 +674,18 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
             df_det = pd.DataFrame(detalles)
             df_p = pd.DataFrame(prods_ref)
 
-            # Unir para obtener descripción
             df_m = df_det.merge(df_p, left_on="producto_id", right_on="id", suffixes=("_det", "_prod"))
             top_prod = df_m.groupby("descripcion")["cantidad"].sum().reset_index()
             top_prod = top_prod.sort_values(by="cantidad", ascending=False).head(10)
 
             st.bar_chart(data=top_prod, x="descripcion", y="cantidad")
-            st.dataframe(top_prod.rename(columns={"descripcion": "Producto", "cantidad": "Unidades Vendidas"}), use_container_width=True)
+            st.dataframe(
+                top_prod.rename(columns={"descripcion": "Producto", "cantidad": "Unidades Vendidas"}),
+                use_container_width=True,
+            )
         else:
             st.info("Aún no existen ventas registradas para calcular rotación.")
 
-    # --- TAB 3: MEJOR PROVEEDOR POR MENOR PRECIO ---
     with tab3:
         st.subheader("🏷️ Análisis de Proveedores con Menor Costo")
         provs = ejecutar_consulta("proveedores")
@@ -506,21 +693,15 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
 
         if prods_costo and provs:
             df_pr = pd.DataFrame(prods_costo)
-            df_pv = pd.DataFrame(provs)
-
-            # Promedio de costo por marca o proveedor
-            st.markdown("**Comparativa de Costo Promedio por Marca/Proveedor Registrado:**")
-            costo_marca = df_pr.groupby("marca")["costo"].mean().reset_index()
-            costo_marca = costo_marca.sort_values(by="costo", ascending=True)
+            costo_marca = df_pr.groupby("marca")["costo"].mean().reset_index().sort_values(by="costo", ascending=True)
 
             st.dataframe(
                 costo_marca.rename(columns={"marca": "Marca / Proveedor", "costo": "Costo Promedio (S/.)"}),
-                use_container_width=True
+                use_container_width=True,
             )
         else:
             st.info("Registra proveedores y costos de productos para visualizar esta comparativa.")
 
-    # --- TAB 4: CUADRO ESTADÍSTICO DE DEVOLUCIONES ---
     with tab4:
         st.subheader("📋 Control Estadístico de Devoluciones y Mermas (Notas de Crédito)")
         devs = ejecutar_consulta("devoluciones")
