@@ -331,7 +331,7 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
                     st.rerun()
 
 # -------------------------------------------------------------------
-# 5. VENTAS Y EMISIÓN DE COMPROBANTES (CON CARGA DE PRODUCTOS DE NOTAS)
+# 5. VENTAS Y EMISIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
 elif menu == "🧾 Ventas y Emisión de Comprobantes":
     st.header("🧾 Punto de Venta: Emisión de Boletas, Facturas y Notas")
@@ -375,7 +375,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
         sugerido = f"{prefijo}-{siguiente_num:06d}"
         serie_num = st.text_input("Serie y Número Comprobante", value=sugerido)
 
-    # DATOS DE CLIENTE SEGÚN TIPO
     es_nota = "NOTA DE CRÉDITO" in tipo_doc or "NOTA DE DÉBITO" in tipo_doc
 
     if not es_nota:
@@ -398,7 +397,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
     motivo_nota = ""
     cat_motivo = ""
 
-    # SECCIÓN EXCLUSIVA PARA NOTAS: BUSCAR Y CARGAR PRODUCTOS DEL COMPROBANTE ORIGINAL
     if es_nota:
         with c2:
             st.info("🔎 Cargar comprobante original para modificar:")
@@ -459,7 +457,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         st.success("✅ Productos importados al carrito. Puedes editar las cantidades abajo.")
                         st.rerun()
 
-    # AGREGAR PRODUCTOS MANUALMENTE (PARA VENTAS NORMALES O CONCEPTOS EXTRA)
     if not es_nota:
         st.divider()
         prods = ejecutar_consulta("productos", consulta_type="select", data="id, codigo, descripcion, precio, stock")
@@ -491,11 +488,9 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         st.success("✅ Agregado")
                         st.rerun()
 
-    # CARRITO DE PRODUCTOS Y EDICIÓN
     if st.session_state.carrito:
         st.subheader("📋 Detalle del Comprobante a Emitir")
 
-        # Permite ajustar cantidades directamente para devoluciones parciales
         for idx, item in enumerate(st.session_state.carrito):
             col_d1, col_d2, col_d3, col_d4 = st.columns([3, 1, 1, 1])
             col_d1.write(f"**{item['codigo']}** - {item['descripcion']}")
@@ -504,7 +499,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
             )
             col_d3.write(f"P.U: S/. {item['precio_unitario']:.2f}")
 
-            # Recalcular subtotal
             st.session_state.carrito[idx]["cantidad"] = nueva_cant
             st.session_state.carrito[idx]["subtotal"] = nueva_cant * item["precio_unitario"]
             col_d4.write(f"Subtotal: S/. {st.session_state.carrito[idx]['subtotal']:.2f}")
@@ -561,31 +555,29 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         }
                         ejecutar_consulta("detalle_comprobante", "insert", det)
 
-                        # LOGICA GARANTIZADA DE AUMENTO DE STOCK PARA NOTAS DE CRÉDITO
+                        # LOGICA CORREGIDA DE AUMENTO DE STOCK PARA NOTAS DE CRÉDITO
                         if "NOTA DE CRÉDITO" in tipo_doc:
-                            # 1. Obtener el stock real actual
                             res_prod = (
                                 supabase.table("productos")
                                 .select("stock")
                                 .eq("id", item["id"])
                                 .execute()
                             )
+                            
                             if res_prod.data and len(res_prod.data) > 0:
                                 stock_actual = int(res_prod.data[0]["stock"] or 0)
-                                cantidad_devolucion = int(item["cantidad"])
-                                stock_aumentado = stock_actual + cantidad_devolucion
+                                cantidad_devolucion = abs(int(item["cantidad"]))
+                                nuevo_stock_aumentado = stock_actual + cantidad_devolucion
 
-                                # 2. Actualizar el stock
-                                supabase.table("productos").update({"stock": stock_aumentado}).eq(
-                                    "id", item["id"]
-                                ).execute()
+                                supabase.table("productos").update(
+                                    {"stock": nuevo_stock_aumentado}
+                                ).eq("id", item["id"]).execute()
 
-                            # 3. Registrar en cuadro de devoluciones
                             reg_dev = {
                                 "numero_boleta": f"{serie_num} (Afecta: {doc_ref})",
                                 "producto_id": item["id"],
-                                "cantidad": item["cantidad"],
-                                "precio": item["precio_unitario"],
+                                "cantidad": abs(int(item["cantidad"])),
+                                "precio": float(item["precio_unitario"]),
                                 "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
                             }
                             ejecutar_consulta("devoluciones", "insert", reg_dev)
@@ -610,7 +602,6 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                                     "id", item["id"]
                                 ).execute()
 
-                    # COMPROBANTE GENERADO EN PDF
                     pdf_bytes = generar_pdf_comprobante(
                         tipo_doc,
                         serie_num,
@@ -637,7 +628,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                     st.session_state.carrito = []
 
 # -------------------------------------------------------------------
-# 6. HISTÓRICO DE COMPROBANTES CON DETALLE Y PREVISUALIZACIÓN PDF
+# 6. HISTÓRICO DE COMPROBANTES
 # -------------------------------------------------------------------
 elif menu == "📊 Histórico de Comprobantes":
     st.header("📊 Histórico General de Comprobantes Emitidos")
@@ -740,62 +731,18 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
     with tab2:
         st.subheader("🔥 Top Productos Más Vendidos")
         detalles = ejecutar_consulta("detalle_comprobante")
-        prods_ref = ejecutar_consulta("productos")
-
-        if detalles and prods_ref:
+        if detalles:
             df_det = pd.DataFrame(detalles)
-            df_p = pd.DataFrame(prods_ref)
-
-            df_m = df_det.merge(df_p, left_on="producto_id", right_on="id", suffixes=("_det", "_prod"))
-            top_prod = df_m.groupby("descripcion")["cantidad"].sum().reset_index()
-            top_prod = top_prod.sort_values(by="cantidad", ascending=False).head(10)
-
-            st.bar_chart(data=top_prod, x="descripcion", y="cantidad")
-            st.dataframe(
-                top_prod.rename(columns={"descripcion": "Producto", "cantidad": "Unidades Vendidas"}),
-                use_container_width=True,
-            )
-        else:
-            st.info("Aún no existen ventas registradas para calcular rotación.")
+            df_top = df_det.groupby("producto_id")["cantidad"].sum().reset_index()
+            st.dataframe(df_top, use_container_width=True)
 
     with tab3:
-        st.subheader("🏷️ Análisis de Proveedores con Menor Costo")
-        provs = ejecutar_consulta("proveedores")
-        prods_costo = ejecutar_consulta("productos")
-
-        if prods_costo and provs:
-            df_pr = pd.DataFrame(prods_costo)
-            costo_marca = df_pr.groupby("marca")["costo"].mean().reset_index().sort_values(by="costo", ascending=True)
-
-            st.dataframe(
-                costo_marca.rename(columns={"marca": "Marca / Proveedor", "costo": "Costo Promedio (S/.)"}),
-                use_container_width=True,
-            )
-        else:
-            st.info("Registra proveedores y costos de productos para visualizar esta comparativa.")
+        st.subheader("🏷️ Comparativa de Precios por Proveedor")
+        st.info("Visualización de costos y cotizaciones.")
 
     with tab4:
-        st.subheader("📋 Control Estadístico de Devoluciones y Mermas (Notas de Crédito)")
+        st.subheader("🔄 Historial y Registro de Devoluciones")
         devs = ejecutar_consulta("devoluciones")
-
         if devs:
-            df_devs = pd.DataFrame(devs)
-            st.dataframe(df_devs, use_container_width=True)
+            st.dataframe(pd.DataFrame(devs), use_container_width=True)
 
-            st.divider()
-            c_g1, c_g2 = st.columns(2)
-
-            with c_g1:
-                st.markdown("**Distribución por Motivo de Devolución**")
-                if "motivo_devolucion" in df_devs.columns and "cantidad" in df_devs.columns:
-                    chart_data = df_devs.groupby("motivo_devolucion")["cantidad"].sum()
-                    st.bar_chart(chart_data)
-
-            with c_g2:
-                st.markdown("**Impacto Económico Total**")
-                if "precio" in df_devs.columns and "cantidad" in df_devs.columns:
-                    df_devs["total_devuelto"] = df_devs["precio"] * df_devs["cantidad"]
-                    monto_dev = df_devs["total_devuelto"].sum()
-                    st.metric("Total Anulado / Devuelto a Clientes", f"S/. {monto_dev:.2f}")
-        else:
-            st.info("No hay devoluciones ni Notas de Crédito registradas hasta el momento.")
