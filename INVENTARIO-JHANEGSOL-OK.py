@@ -21,8 +21,8 @@ st.set_page_config(
 def init_supabase() -> Client:
   try:
     if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
-      url = st.secrets["SUPABASE_URL"]
-      key = st.secrets["SUPABASE_KEY"]
+      url = st.secrets["https://oqafvzwwooxkohkdmatv.supabase.co"]
+      key = st.secrets["eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"]
     else:
       url = "https://oqafvzwwooxkohkdmatv.supabase.co"
       key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6210Mzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
