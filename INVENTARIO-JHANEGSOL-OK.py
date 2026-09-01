@@ -80,6 +80,10 @@ if "pdf_generado" not in st.session_state:
 if "num_ultimo_comp" not in st.session_state:
     st.session_state.num_ultimo_comp = ""
 
+# CANDADO DE BLOQUEO CONTRA DOBLE DISPARO DE EVENTOS DE STREAMLIT
+if "procesando_operacion" not in st.session_state:
+    st.session_state.procesando_operacion = False
+
 # --- GENERADOR DE PDF ---
 def generar_pdf_comprobante(
     tipo_doc,
@@ -184,103 +188,115 @@ def generar_pdf_comprobante(
     buffer.seek(0)
     return buffer
 
-# --- CALLBACK EXCLUSIVO DE VENTAS: DESCUENTA EXACTAMENTE 1 SOLA VEZ ---
+# --- CALLBACK EXCLUSIVO DE VENTAS: BLINDADO CONTRA DUPLICACIÓN ---
 def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen):
-    if not st.session_state.carrito_ventas:
+    if st.session_state.procesando_operacion or not st.session_state.carrito_ventas:
         return
 
-    comp_data = {
-        "tipo_comprobante": tipo_doc,
-        "serie_numero": serie_num,
-        "cliente_nombre": cliente_nom,
-        "cliente_documento": cliente_doc,
-        "subtotal": round(subtotal, 2),
-        "igv": round(igv, 2),
-        "total": round(total_gen, 2),
-    }
-    res = ejecutar_consulta("comprobantes", "insert", comp_data)
+    st.session_state.procesando_operacion = True
 
-    if res and res.data:
-        comp_id = res.data[0]["id"]
+    try:
+        comp_data = {
+            "tipo_comprobante": tipo_doc,
+            "serie_numero": serie_num,
+            "cliente_nombre": cliente_nom,
+            "cliente_documento": cliente_doc,
+            "subtotal": round(subtotal, 2),
+            "igv": round(igv, 2),
+            "total": round(total_gen, 2),
+        }
+        res = ejecutar_consulta("comprobantes", "insert", comp_data)
 
-        for item in st.session_state.carrito_ventas:
-            cant_exacta = int(item["cantidad"])
-            p_id = item["id"]
+        if res and res.data:
+            comp_id = res.data[0]["id"]
 
-            det = {
-                "comprobante_id": comp_id,
-                "producto_id": p_id,
-                "cantidad": cant_exacta,
-                "precio_unitario": item["precio_unitario"],
-            }
-            ejecutar_consulta("detalle_comprobante", "insert", det)
+            for item in st.session_state.carrito_ventas:
+                cant_exacta = int(item["cantidad"])
+                p_id = item["id"]
 
-            # RESTA ÚNICA ATÓMICA DE STOCK
-            res_prod = supabase.table("productos").select("stock").eq("id", p_id).execute()
-            if res_prod.data:
-                stock_actual = int(res_prod.data[0]["stock"] or 0)
-                nuevo_stock = stock_actual - cant_exacta
-                supabase.table("productos").update({"stock": nuevo_stock}).eq("id", p_id).execute()
+                det = {
+                    "comprobante_id": comp_id,
+                    "producto_id": p_id,
+                    "cantidad": cant_exacta,
+                    "precio_unitario": item["precio_unitario"],
+                }
+                ejecutar_consulta("detalle_comprobante", "insert", det)
 
-        st.session_state.pdf_generado = generar_pdf_comprobante(
-            tipo_doc, serie_num, cliente_nom, cliente_doc, st.session_state.carrito_ventas, subtotal, igv, total_gen
-        )
-        st.session_state.num_ultimo_comp = serie_num
-        st.session_state.carrito_ventas = []
-
-# --- CALLBACK EXCLUSIVO DE NOTA DE CRÉDITO: SUMA EXACTAMENTE 1 SOLA VEZ ---
-def callback_emito_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota):
-    if not st.session_state.carrito_nc:
-        return
-
-    comp_data = {
-        "tipo_comprobante": tipo_nota,
-        "serie_numero": serie_nota,
-        "cliente_nombre": cliente_nom,
-        "cliente_documento": cliente_doc,
-        "subtotal": round(subtotal, 2),
-        "igv": round(igv, 2),
-        "total": round(total_gen, 2),
-    }
-    res = ejecutar_consulta("comprobantes", "insert", comp_data)
-
-    if res and res.data:
-        comp_id = res.data[0]["id"]
-
-        for item in st.session_state.carrito_nc:
-            cant_retorno = int(item["cantidad"])
-            p_id = item["id"]
-
-            det = {
-                "comprobante_id": comp_id,
-                "producto_id": p_id,
-                "cantidad": cant_retorno,
-                "precio_unitario": item["precio_unitario"],
-            }
-            ejecutar_consulta("detalle_comprobante", "insert", det)
-
-            if tipo_nota == "NOTA DE CRÉDITO":
-                # SUMA ÚNICA ATÓMICA DE STOCK (DEVOLUCIÓN)
+                # RESTA ÚNICA DE STOCK EN BD
                 res_prod = supabase.table("productos").select("stock").eq("id", p_id).execute()
                 if res_prod.data:
                     stock_actual = int(res_prod.data[0]["stock"] or 0)
-                    stock_devuelto = stock_actual + cant_retorno
-                    supabase.table("productos").update({"stock": stock_devuelto}).eq("id", p_id).execute()
+                    nuevo_stock = stock_actual - cant_exacta
+                    supabase.table("productos").update({"stock": nuevo_stock}).eq("id", p_id).execute()
 
-                reg_dev = {
-                    "numero_boleta": f"{serie_nota} (Afecta: {doc_ref})",
+            st.session_state.pdf_generado = generar_pdf_comprobante(
+                tipo_doc, serie_num, cliente_nom, cliente_doc, st.session_state.carrito_ventas, subtotal, igv, total_gen
+            )
+            st.session_state.num_ultimo_comp = serie_num
+            st.session_state.carrito_ventas = []
+
+    finally:
+        st.session_state.procesando_operacion = False
+
+# --- CALLBACK EXCLUSIVO DE NOTA DE CRÉDITO: BLINDADO CONTRA DUPLICACIÓN ---
+def callback_emito_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota):
+    if st.session_state.procesando_operacion or not st.session_state.carrito_nc:
+        return
+
+    st.session_state.procesando_operacion = True
+
+    try:
+        comp_data = {
+            "tipo_comprobante": tipo_nota,
+            "serie_numero": serie_nota,
+            "cliente_nombre": cliente_nom,
+            "cliente_documento": cliente_doc,
+            "subtotal": round(subtotal, 2),
+            "igv": round(igv, 2),
+            "total": round(total_gen, 2),
+        }
+        res = ejecutar_consulta("comprobantes", "insert", comp_data)
+
+        if res and res.data:
+            comp_id = res.data[0]["id"]
+
+            for item in st.session_state.carrito_nc:
+                cant_retorno = int(item["cantidad"])
+                p_id = item["id"]
+
+                det = {
+                    "comprobante_id": comp_id,
                     "producto_id": p_id,
                     "cantidad": cant_retorno,
-                    "precio": float(item["precio_unitario"]),
-                    "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
+                    "precio_unitario": item["precio_unitario"],
                 }
-                ejecutar_consulta("devoluciones", "insert", reg_dev)
+                ejecutar_consulta("detalle_comprobante", "insert", det)
 
-        st.session_state.pdf_generado = generar_pdf_comprobante(
-            tipo_nota, serie_nota, cliente_nom, cliente_doc, st.session_state.carrito_nc, subtotal, igv, total_gen, doc_referencia=doc_ref, motivo=motivo_nota
-        )
-        st.session_state.num_ultimo_comp = serie_nota
-        st.session_state.carrito_nc = []
+                if tipo_nota == "NOTA DE CRÉDITO":
+                    # SUMA ÚNICA DE STOCK EN BD (RESTITUYE STOCK)
+                    res_prod = supabase.table("productos").select("stock").eq("id", p_id).execute()
+                    if res_prod.data:
+                        stock_actual = int(res_prod.data[0]["stock"] or 0)
+                        stock_devuelto = stock_actual + cant_retorno
+                        supabase.table("productos").update({"stock": stock_devuelto}).eq("id", p_id).execute()
+
+                    reg_dev = {
+                        "numero_boleta": f"{serie_nota} (Afecta: {doc_ref})",
+                        "producto_id": p_id,
+                        "cantidad": cant_retorno,
+                        "precio": float(item["precio_unitario"]),
+                        "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
+                    }
+                    ejecutar_consulta("devoluciones", "insert", reg_dev)
+
+            st.session_state.pdf_generado = generar_pdf_comprobante(
+                tipo_nota, serie_nota, cliente_nom, cliente_doc, st.session_state.carrito_nc, subtotal, igv, total_gen, doc_referencia=doc_ref, motivo=motivo_nota
+            )
+            st.session_state.num_ultimo_comp = serie_nota
+            st.session_state.carrito_nc = []
+
+    finally:
+        st.session_state.procesando_operacion = False
 
 # --- INTERFAZ PRINCIPAL ---
 st.title("📦 Sistema Comercial, Inventarios y Facturación - Jhanegsol")
@@ -553,13 +569,14 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
             f"🖨️ EMITIR {tipo_doc} Y 🔴 DESCONTAR STOCK",
             type="primary",
             use_container_width=True,
+            disabled=st.session_state.procesando_operacion,
             on_click=callback_emito_venta,
             args=(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen),
         )
 
     if st.session_state.pdf_generado and st.session_state.num_ultimo_comp == serie_num:
         st.balloons()
-        st.success(f"🎉 Comprobante emitido con éxito.")
+        st.success("🎉 Comprobante emitido con éxito.")
         st.download_button(
             label="📄 Descargar Comprobante PDF",
             data=st.session_state.pdf_generado,
@@ -568,7 +585,7 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
         )
 
 # -------------------------------------------------------------------
-# 6. NOTAS DE CRÉDITO Y DÉBITO (CON SUMA GARANTIZADA DE STOCK)
+# 6. NOTAS DE CRÉDITO Y DÉBITO
 # -------------------------------------------------------------------
 elif menu == "📝 Notas de Crédito y Débito":
     st.header("📝 Gestión Exclusiva de Notas de Crédito y Débito")
@@ -691,6 +708,7 @@ elif menu == "📝 Notas de Crédito y Débito":
                     lbl_btn_nc,
                     type="primary",
                     use_container_width=True,
+                    disabled=st.session_state.procesando_operacion,
                     on_click=callback_emito_nota,
                     args=(
                         tipo_nota,
