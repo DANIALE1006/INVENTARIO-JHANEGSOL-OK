@@ -326,13 +326,8 @@ def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal
                 st.error("❌ Error registrando el detalle de la venta.")
                 return
 
-            # ÚNICO descuento de stock realizado por Python
-            if not modificar_stock(p_id, -cant_exacta):
-                st.error(
-                    f"❌ No se pudo actualizar el stock de "
-                    f"{item['descripcion']}."
-                )
-                return
+            # El trigger de Supabase actualiza el stock automáticamente.
+            # NO modificar stock aquí para evitar descuentos dobles.
 
         # 5. PDF y limpieza
         st.session_state.pdf_generado = generar_pdf_comprobante(
@@ -351,7 +346,7 @@ def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal
 
         st.success(
             f"✅ {tipo_doc} {serie_num} emitido correctamente. "
-            f"Stock descontado una sola vez."
+            f"Stock actualizado correctamente por la base de datos."
         )
 
     except Exception as e:
@@ -503,12 +498,9 @@ def callback_emito_nota(
             # NOTA DE CRÉDITO: SUMA STOCK
             if tipo_nota == "NOTA DE CRÉDITO":
 
-                if not modificar_stock(p_id, +cantidad):
-                    st.error(
-                        f"❌ No se pudo restituir el stock de "
-                        f"{item['descripcion']}."
-                    )
-                    return
+                # El trigger de Supabase detecta NOTA DE CRÉDITO
+                # y suma automáticamente la cantidad al stock.
+                # NO modificar stock aquí para evitar doble restitución.
 
                 reg_dev = {
                     "numero_boleta": f"{serie_nota} (Afecta: {doc_ref})",
@@ -554,7 +546,7 @@ def callback_emito_nota(
         if tipo_nota == "NOTA DE CRÉDITO":
             st.success(
                 f"✅ Nota de crédito {serie_nota} procesada. "
-                f"Stock restituido una sola vez."
+                f"Stock restituido correctamente por la base de datos."
             )
         else:
             st.success(
