@@ -2,12 +2,34 @@ import io
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
+from supabase import create_client, Client
 
 # -------------------------------------------------------------------
-# CONFIGURACIÓN INICIAL DE SESSION STATE
+# 1. CONFIGURACIÓN INICIAL DE PÁGINA Y SUPABASE
+# -------------------------------------------------------------------
+st.set_page_config(page_title="Sistema POS / Ventas", layout="wide", page_icon="🧾")
+
+# REEMPLAZA ESTAS CREDENCIALES CON LAS TUYAS (o usa st.secrets)
+SUPABASE_URL = "https://oqafvzwwooxkohkdmatv.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
+
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+try:
+    supabase = init_supabase()
+except Exception as e:
+    st.error(f"Error al conectar con Supabase: {e}")
+
+# -------------------------------------------------------------------
+# 2. INICIALIZACIÓN DE SESSION STATE (ESTADO GLOBAL)
 # -------------------------------------------------------------------
 if "carrito_ventas" not in st.session_state:
     st.session_state.carrito_ventas = []
+
+if "carrito_nc" not in st.session_state:
+    st.session_state.carrito_nc = []
 
 if "procesando_operacion" not in st.session_state:
     st.session_state.procesando_operacion = False
@@ -23,26 +45,52 @@ if "datos_ultimo_comprobante" not in st.session_state:
 
 
 # -------------------------------------------------------------------
-# FUNCIONES AUXILIARES DE BASE DE DATOS (REEMPLAZAR CON TU LÓGICA DE SUPABASE)
+# 3. FUNCIONES DE BASE DE DATOS (SUPABASE)
 # -------------------------------------------------------------------
 def ejecutar_consulta(tabla, consulta_type="select", data=None, where_col=None, where_val=None, like_col=None, like_val=None):
     """
-    Función adaptadora para Supabase o base de datos local.
-    Ajusta esta función según tu integración real con Supabase Client.
+    Función adaptadora para realizar operaciones en Supabase.
     """
-    # NOTA: Reemplazar este bloque condicional con tus llamadas reales a supabase.table(tabla)
-    return []
+    try:
+        query = supabase.table(tabla)
+        
+        if consulta_type == "select":
+            if data and data != "*":
+                query = query.select(data)
+            else:
+                query = query.select("*")
+                
+            if where_col and where_val is not None:
+                query = query.eq(where_col, where_val)
+            if like_col and like_val:
+                query = query.ilike(like_col, like_val)
+                
+            res = query.execute()
+            return res.data
+
+        elif consulta_type == "insert":
+            res = query.insert(data).execute()
+            return res.data
+
+        elif consulta_type == "update":
+            if where_col and where_val is not None:
+                res = query.update(data).eq(where_col, where_val).execute()
+                return res.data
+
+    except Exception as e:
+        st.error(f"Error en consulta BD ({tabla} - {consulta_type}): {e}")
+        return []
 
 
 # -------------------------------------------------------------------
-# GENERADOR DE PDF CON FPDF2
+# 4. GENERADOR DE PDF CON FPDF2 (FORMATO TICKET)
 # -------------------------------------------------------------------
 def generar_pdf_comprobante(tipo_doc, serie_num, cliente_nom, cliente_doc, items, subtotal, igv, total_gen, motivo=""):
     """
     Genera un comprobante en PDF con formato Ticket (80mm de ancho).
     Devuelve los bytes del PDF.
     """
-    pdf = FPDF(format=(80, 200), unit="mm")
+    pdf = FPDF(format=(80, 210), unit="mm")
     pdf.set_margins(4, 4, 4)
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=5)
@@ -108,12 +156,11 @@ def generar_pdf_comprobante(tipo_doc, serie_num, cliente_nom, cliente_doc, items
     pdf.set_font("Helvetica", "I", 7)
     pdf.cell(0, 4, "¡Gracias por su compra!", align="C", new_x="LMARGIN", new_y="NEXT")
 
-    # Retornar Bytes
     return bytes(pdf.output())
 
 
 # -------------------------------------------------------------------
-# CALLBACK: EMISIÓN DE VENTAS DIRECTAS (DESCUENTA STOCK)
+# 5. CALLBACKS DE PROCESAMIENTO
 # -------------------------------------------------------------------
 def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen):
     try:
@@ -144,7 +191,7 @@ def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal
                 nuevo_stock = max(0, p_actual[0]["stock"] - item["cantidad"])
                 ejecutar_consulta("productos", consulta_type="update", data={"stock": nuevo_stock}, where_col="id", where_val=item["id"])
 
-        # 3. Generar PDF y Almacenar en Session State
+        # 3. Generar PDF
         pdf_bytes = generar_pdf_comprobante(tipo_doc, serie_num, cliente_nom, cliente_doc, items, subtotal, igv, total_gen)
 
         st.session_state.pdf_generado = pdf_bytes
@@ -167,9 +214,6 @@ def callback_emito_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal
         st.session_state.procesando_operacion = False
 
 
-# -------------------------------------------------------------------
-# CALLBACK: EMISIÓN DE NOTA DE CRÉDITO (REINSERTA / AUMENTA STOCK)
-# -------------------------------------------------------------------
 def callback_emitir_nota_credito(serie_nc, comp_ref_serie, cliente_nom, cliente_doc, motivo, items_nc):
     try:
         st.session_state.procesando_operacion = True
@@ -182,7 +226,7 @@ def callback_emitir_nota_credito(serie_nc, comp_ref_serie, cliente_nom, cliente_
         subtotal = total_gen / 1.18
         igv = total_gen - subtotal
 
-        # 1. Registrar Nota de Crédito en BD
+        # 1. Registrar Nota de Crédito
         datos_nc = {
             "tipo_documento": "NOTA DE CREDITO",
             "serie_numero": serie_nc,
@@ -196,7 +240,7 @@ def callback_emitir_nota_credito(serie_nc, comp_ref_serie, cliente_nom, cliente_
         }
         ejecutar_consulta("comprobantes", consulta_type="insert", data=datos_nc)
 
-        # 2. INCREMENTAR STOCK (DEVOLUCIÓN)
+        # 2. INCREMENTAR STOCK (DEVOLUCIÓN A INVENTARIO)
         for item in items_nc:
             prod_id = item["id"]
             cant_devueltas = item["cantidad"]
@@ -221,6 +265,9 @@ def callback_emitir_nota_credito(serie_nc, comp_ref_serie, cliente_nom, cliente_
             "motivo": motivo,
         }
 
+        # Vaciar lista de devolución
+        st.session_state.carrito_nc = []
+
     except Exception as e:
         st.error(f"Error al emitir Nota de Crédito: {e}")
     finally:
@@ -228,15 +275,17 @@ def callback_emitir_nota_credito(serie_nc, comp_ref_serie, cliente_nom, cliente_
 
 
 # -------------------------------------------------------------------
-# MENÚ Y NAVEGACIÓN PRINCIPAL DE STREAMLIT
+# 6. INTERFAZ DE USUARIO (NAVEGACIÓN)
 # -------------------------------------------------------------------
+st.title("🛒 Sistema de Ventas e Inventario")
+
 menu = st.sidebar.radio(
-    "Navegación",
+    "Menú principal",
     ["🧾 Ventas Directas (Boletas y Facturas)", "🔄 Nota de Crédito (Devolución)"],
 )
 
 # -------------------------------------------------------------------
-# 1. VENTAS DIRECTAS (BOLETAS Y FACTURAS)
+# MÓDULO A: VENTAS DIRECTAS
 # -------------------------------------------------------------------
 if menu == "🧾 Ventas Directas (Boletas y Facturas)":
     st.header("🧾 Punto de Venta: Boletas, Facturas y Tickets")
@@ -369,7 +418,7 @@ if menu == "🧾 Ventas Directas (Boletas y Facturas)":
 
 
 # -------------------------------------------------------------------
-# 2. NOTA DE CRÉDITO (AUMENTA STOCK)
+# MÓDULO B: NOTAS DE CRÉDITO
 # -------------------------------------------------------------------
 elif menu == "🔄 Nota de Crédito (Devolución)":
     st.header("🔄 Emisión de Nota de Crédito (Devolución de Stock)")
@@ -405,7 +454,6 @@ elif menu == "🔄 Nota de Crédito (Devolución)":
     st.divider()
     st.subheader("📦 Ítems a Devolver a Inventario")
 
-    # Selección de productos para la devolución
     prods_nc = ejecutar_consulta("productos", consulta_type="select", data="id, codigo, descripcion, precio, stock")
     if prods_nc:
         dict_nc = {f"{p['codigo']} | {p['descripcion']}": p for p in prods_nc}
@@ -419,9 +467,6 @@ elif menu == "🔄 Nota de Crédito (Devolución)":
             st.write("")
             st.write("")
             if st.button("➕ Añadir a Devolución"):
-                if "carrito_nc" not in st.session_state:
-                    st.session_state.carrito_nc = []
-
                 p_data = dict_nc[p_sel_nc]
                 st.session_state.carrito_nc.append(
                     {
@@ -436,11 +481,11 @@ elif menu == "🔄 Nota de Crédito (Devolución)":
                 st.success("Añadido a lista de devolución")
                 st.rerun()
 
-    if "carrito_nc" in st.session_state and st.session_state.carrito_nc:
+    if st.session_state.carrito_nc:
         st.write("---")
         for i_nc in st.session_state.carrito_nc:
             st.write(
-                f"• **{i_nc['codigo']}** - {i_nc['descripcion']} | Cantidad: **{i_nc['cantidad']}** | Subtotal: S/. {i_nc['subtotal']:.2f}"
+                f"• **{i_nc['codigo']}** - {i_nc['descripcion']} | Cantidad a sumar al stock: **{i_nc['cantidad']}** | Subtotal: S/. {i_nc['subtotal']:.2f}"
             )
 
         if st.button("🗑️ Limpiar Ítems de NC"):
@@ -464,18 +509,18 @@ elif menu == "🔄 Nota de Crédito (Devolución)":
                 cliente_nc_nom,
                 cliente_nc_doc,
                 motivo_nc,
-                st.session_state.get("carrito_nc", []),
+                st.session_state.carrito_nc,
             ),
         )
 
 
 # -------------------------------------------------------------------
-# SECCIÓN GLOBAL: PREVISUALIZACIÓN Y DESCARGA DE PDF PERSISTENTE
+# 7. SECCIÓN GLOBAL: PREVISUALIZACIÓN Y DESCARGA PERSISTENTE DE PDF
 # -------------------------------------------------------------------
 if st.session_state.pdf_generado is not None and st.session_state.datos_ultimo_comprobante:
     st.divider()
     st.balloons()
-    st.success(f"🎉 Operación finalizada exitosamente: {st.session_state.ultimo_pdf_nombre}")
+    st.success(f"🎉 Operación procesada correctamente: {st.session_state.ultimo_pdf_nombre}")
 
     col_prev1, col_prev2 = st.columns([1, 1])
 
@@ -485,7 +530,7 @@ if st.session_state.pdf_generado is not None and st.session_state.datos_ultimo_c
         info = st.session_state.datos_ultimo_comprobante
         items_html = "".join(
             [
-                f"<tr><td>{it['cantidad']}x {it['descripcion'][:15]}</td><td style='text-align:right;'>S/ {it['subtotal']:.2f}</td></tr>"
+                f"<tr><td>{it['cantidad']}x {it['descripcion'][:18]}</td><td style='text-align:right;'>S/ {it['subtotal']:.2f}</td></tr>"
                 for it in info["items"]
             ]
         )
@@ -511,7 +556,7 @@ if st.session_state.pdf_generado is not None and st.session_state.datos_ultimo_c
 
     with col_prev2:
         st.subheader("📥 DESCARGA DE COMPROBANTE")
-        st.write("Haz clic en el siguiente botón para obtener el PDF generado:")
+        st.write("Presiona el botón para descargar el comprobante generado:")
 
         st.download_button(
             label="📄 Descargar PDF Oficial",
