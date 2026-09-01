@@ -251,22 +251,33 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
 
     st.divider()
 
-    # 2. Configuración del Comprobante
+# 2. Configuración del Comprobante
     c1, c2, c3 = st.columns(3)
     with c1:
         tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA", "NOTA DE CRÉDITO", "NOTA DE DÉBITO"])
-        serie_num = st.text_input("Serie y Número Comprobante", value="B001-000001" if "BOLETA" in tipo_doc else "F001-000001")
-    with c2:
-        tipo_operacion = st.selectbox("Tipo Operación", ["VENTA INTERNA", "VENTA AL CONTADO", "VENTA A CRÉDITO"])
-        fecha_emision = st.date_input("Fecha Emisión", datetime.now())
-    with c3:
-        condicion_pago = st.radio("Condición de Pago", ["CONTADO", "CRÉDITO"])
-        if condicion_pago == "CRÉDITO":
-            dias_credito = st.number_input("Días de Crédito", min_value=1, value=30)
-            fecha_venc = fecha_emision + timedelta(days=dias_credito)
-            st.info(f"📅 Fecha Vencimiento: **{fecha_venc.strftime('%d/%m/%Y')}**")
+        
+        # Generación automática de correlativo
+        prefijo = "F001" if "FACTURA" in tipo_doc else "B001"
+        try:
+            # Buscar el último correlativo generado para esa serie
+            ult_comp = supabase.table("comprobantes")\
+                .select("serie_numero")\
+                .like("serie_numero", f"{prefijo}-%")\
+                .order("id", desc=True)\
+                .limit(1)\
+                .execute().data
+            
+            if ult_comp:
+                ultimo_num = int(ult_comp[0]["serie_numero"].split("-")[1])
+                siguiente_num = ultimo_num + 1
+            else:
+                siguiente_num = 1
+                
+            sugerido = f"{prefijo}-{siguiente_num:06d}"
+        except Exception:
+            sugerido = f"{prefijo}-000001"
 
-    st.divider()
+        serie_num = st.text_input("Serie y Número Comprobante", value=sugerido)
 
     # 3. Selección e Inclusión de Productos al Carrito
     prods = supabase.table("productos").select("id, codigo, descripcion, precio, stock").execute().data
