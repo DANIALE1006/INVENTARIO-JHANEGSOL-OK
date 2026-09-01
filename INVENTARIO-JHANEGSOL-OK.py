@@ -1,12 +1,12 @@
-from datetime import datetime
 import io
+from datetime import datetime
 import pandas as pd
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from supabase import Client, create_client
 import streamlit as st
+from supabase import Client, create_client
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -555,7 +555,7 @@ elif menu == "🧾 Ventas y Emisión de Comprobantes":
                         }
                         ejecutar_consulta("detalle_comprobante", "insert", det)
 
-                        # LOGICA CORREGIDA DE AUMENTO DE STOCK PARA NOTAS DE CRÉDITO
+                        # AUMENTO DE STOCK PARA NOTAS DE CRÉDITO
                         if "NOTA DE CRÉDITO" in tipo_doc:
                             res_prod = (
                                 supabase.table("productos")
@@ -745,4 +745,3 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
         devs = ejecutar_consulta("devoluciones")
         if devs:
             st.dataframe(pd.DataFrame(devs), use_container_width=True)
-
