@@ -300,9 +300,6 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
         comp_id = res.data[0]["id"]
 
         for item in st.session_state.carrito_ventas:
-            # --- DIAGNÓSTICO TEMPORAL: lee el stock en 3 momentos para aislar dónde baja ---
-            stock_antes = supabase.table("productos").select("stock").eq("id", item["id"]).single().execute().data.get("stock")
-
             det = {
                 "comprobante_id": comp_id,
                 "producto_id": item["id"],
@@ -310,24 +307,9 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
                 "precio_unitario": float(item["precio_unitario"]),
             }
             ejecutar_consulta("detalle_comprobante", "insert", det)
-
-            # Si el stock YA cambió aquí, antes de llamar a ajustar_stock_producto,
-            # significa que algo (un trigger) reacciona al insert en detalle_comprobante.
-            stock_tras_insert = supabase.table("productos").select("stock").eq("id", item["id"]).single().execute().data.get("stock")
-
-            # Descontar stock (AJUSTE ATÓMICO — reemplaza el patrón select+update anterior)
-            ajustar_stock_producto(item["id"], -int(item["cantidad"]))
-
-            stock_despues = supabase.table("productos").select("stock").eq("id", item["id"]).single().execute().data.get("stock")
-
-            st.info(
-                f"🔎 DIAGNÓSTICO — Producto {item['id']} | cantidad vendida: {item['cantidad']}\n\n"
-                f"- Stock ANTES de insertar detalle: **{stock_antes}**\n"
-                f"- Stock DESPUÉS de insertar detalle (antes de ajustar_stock): **{stock_tras_insert}**\n"
-                f"- Stock DESPUÉS de ajustar_stock: **{stock_despues}**\n\n"
-                f"Si 'ANTES' y 'DESPUÉS de insertar detalle' ya son distintos, hay un trigger en "
-                f"`detalle_comprobante` descontando stock automáticamente — esa es la causa del doble descuento."
-            )
+            # El stock se descuenta automáticamente por el trigger 'tr_descontar_stock_venta'
+            # al insertar en detalle_comprobante. NO se ajusta manualmente aquí para evitar
+            # duplicar el descuento.
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
             tipo_doc, serie_num, cliente_nom, cliente_doc,
@@ -406,9 +388,9 @@ def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, 
                     "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
                 }
                 ejecutar_consulta("devoluciones", "insert", reg_dev)
-
-                # --- AUMENTO DE STOCK AL INGRESAR NOTA DE CRÉDITO (AJUSTE ATÓMICO) ---
-                ajustar_stock_producto(p_id, cantidad)
+                # El stock se repone automáticamente por el trigger 'tr_descontar_stock_venta'
+                # (rama NOTA DE CRÉDITO) al insertar en detalle_comprobante. NO se ajusta
+                # manualmente aquí para evitar duplicar el aumento.
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
             tipo_nota, serie_nota, cliente_nom, cliente_doc,
