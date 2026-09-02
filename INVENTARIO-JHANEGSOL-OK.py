@@ -25,7 +25,8 @@ def init_supabase() -> Client:
             key = st.secrets["SUPABASE_KEY"]
         else:
             url = "https://oqafvzwwooxkohkdmatv.supabase.co"
-            key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6I..."
+            # REEMPLAZAR 'TU_API_KEY_COMPLETA_AQUI' POR TU CLAVE ANON REAL DE SUPABASE
+            key = "TU_API_KEY_COMPLETA_AQUI"
 
         return create_client(url, key)
     except Exception as e:
@@ -64,6 +65,8 @@ def ejecutar_consulta(
             return query.insert(data).execute()
         elif consulta_type == "update":
             return query.update(data).eq(eq_col, eq_val).execute()
+        elif consulta_type == "delete":
+            return query.delete().eq(eq_col, eq_val).execute()
     except Exception as e:
         st.error(f"⚠️ Error en base de datos (Tabla '{tabla}'): {e}")
         return None
@@ -190,7 +193,7 @@ def mostrar_previsualizacion_pdf(pdf_bytes):
         st.markdown("### 👁️ Previsualización del Comprobante")
         for img in images:
             st.image(img, use_column_width=True)
-    except Exception as e:
+    except Exception:
         st.info("ℹ️ Para habilitar la vista previa visual de PDF, asegúrese de tener instalada la herramienta del sistema `poppler`.")
 
 def comprobante_existe(serie_numero):
@@ -361,7 +364,7 @@ menu = st.sidebar.radio(
         "📥 Ingresos (Compras / Entrada)",
         "🧾 Ventas Directas (Boletas y Facturas)",
         "📝 Notas de Crédito y Débito",
-        "📊 Histórico de Comprobantes",
+        "📊 Histórico y Anulación de Comprobantes",
         "📈 Estadísticas y Métricas de Negocio",
     ],
 )
@@ -700,13 +703,44 @@ elif menu == "📝 Notas de Crédito y Débito":
             st.warning("⚠️ No se encontró el comprobante de referencia especificado.")
 
 # -------------------------------------------------------------------
-# 7. HISTÓRICO DE COMPROBANTES
+# 7. HISTÓRICO Y ANULACIÓN DE COMPROBANTES
 # -------------------------------------------------------------------
-elif menu == "📊 Histórico de Comprobantes":
-    st.header("📊 Histórico General de Comprobantes Emitidos")
+elif menu == "📊 Histórico y Anulación de Comprobantes":
+    st.header("📊 Histórico General y Anulación de Comprobantes")
     comps = ejecutar_consulta("comprobantes", order_col="id", desc=True)
     if comps:
-        st.dataframe(pd.DataFrame(comps), use_container_width=True)
+        df_comps = pd.DataFrame(comps)
+        st.dataframe(df_comps, use_container_width=True)
+
+        st.divider()
+        st.subheader("❌ Anular / Eliminar Comprobante")
+        
+        comp_sel_num = st.selectbox("Seleccione el N° de Comprobante a anular", df_comps["serie_numero"].tolist())
+        reponer_stock = st.checkbox("🔄 Reponer stock de productos automáticamente al anular", value=True)
+
+        if st.button("🚫 Anular Comprobante", type="primary"):
+            comp_obj = next((c for c in comps if c["serie_numero"] == comp_sel_num), None)
+            if comp_obj:
+                c_id = comp_obj["id"]
+
+                # Reposición opcional del stock
+                if reponer_stock:
+                    dets = ejecutar_consulta("detalle_comprobante", eq_col="comprobante_id", eq_val=c_id)
+                    if dets:
+                        for d in dets:
+                            p_id = d["producto_id"]
+                            cant = d["cantidad"]
+                            p_act = supabase.table("productos").select("stock").eq("id", p_id).single().execute()
+                            if p_act.data:
+                                stock_actual = int(p_act.data.get("stock") or 0)
+                                ejecutar_consulta("productos", "update", {"stock": stock_actual + cant}, eq_col="id", eq_val=p_id)
+
+                # Eliminar detalles e registro principal
+                ejecutar_consulta("detalle_comprobante", "delete", eq_col="comprobante_id", eq_val=c_id)
+                ejecutar_consulta("comprobantes", "delete", eq_col="id", eq_val=c_id)
+
+                st.success(f"✅ Comprobante {comp_sel_num} anulado exitosamente.")
+                st.rerun()
 
 # -------------------------------------------------------------------
 # 8. ESTADÍSTICAS Y MÉTRICAS
@@ -754,20 +788,10 @@ elif menu == "📈 Estadísticas y Métricas de Negocio":
     prods_stock = ejecutar_consulta("productos")
     if prods_stock:
         df_stock = pd.DataFrame(prods_stock)
-        if "stock_minimo" in df_stock.columns:
-            df_quiebre = df_stock[df_stock["stock"] <= df_stock["stock_minimo"]]
-        else:
-            df_quiebre = df_stock[df_stock["stock"] <= 5]
+        df_critico = df_stock[df_stock["stock"] <= df_stock["stock_minimo"]]
 
-        if not df_quiebre.empty:
-            st.warning(f"Se encontraron {len(df_quiebre)} productos en nivel crítico de reabastecimiento:")
-            st.dataframe(df_quiebre[["codigo", "descripcion", "stock", "stock_minimo"]], use_container_width=True)
+        if not df_critico.empty:
+            st.warning(f"⚠️ Se encontraron {len(df_critico)} productos con stock igual o inferior a su límite mínimo:")
+            st.dataframe(df_critico[["codigo", "marca", "descripcion", "stock", "stock_minimo"]], use_container_width=True)
         else:
-            st.success("✅ Todos los productos tienen niveles aceptables de stock.")
-
-    # --- 3. PROVEEDORES Y PRECIOS DE COMPRA ---
-    st.subheader("🏷️ Análisis de Precios por Proveedor")
-    df_prods = pd.DataFrame(prods_stock) if prods_stock else pd.DataFrame()
-    if not df_prods.empty and "costo" in df_prods.columns:
-        df_costos = df_prods[["codigo", "descripcion", "costo", "precio"]].sort_values(by="costo", ascending=True)
-        st.dataframe(df_costos, use_container_width=True)
+            st.success("✅ Todos los productos mantienen niveles aceptables de inventario.")
