@@ -25,8 +25,7 @@ def init_supabase() -> Client:
             key = st.secrets["SUPABASE_KEY"]
         else:
             url = "https://oqafvzwwooxkohkdmatv.supabase.co"
-            # REEMPLAZAR 'TU_API_KEY_COMPLETA_AQUI' POR TU CLAVE ANON REAL DE SUPABASE
-            key = "TU_API_KEY_COMPLETA_AQUI"
+            key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
 
         return create_client(url, key)
     except Exception as e:
