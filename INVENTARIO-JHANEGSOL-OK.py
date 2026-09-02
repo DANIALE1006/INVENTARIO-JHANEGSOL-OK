@@ -94,6 +94,13 @@ def ajustar_stock_producto(producto_id, delta):
     """delta negativo para descontar (ventas), positivo para reponer (notas de crédito, anulaciones, ingresos)."""
     try:
         res = supabase.rpc("ajustar_stock", {"p_id": producto_id, "p_delta": int(delta)}).execute()
+        if res.data is None:
+            # La función no afectó ninguna fila (posible bloqueo por RLS, id inexistente, etc.)
+            st.error(
+                f"⚠️ El stock del producto {producto_id} no se actualizó (la función devolvió NULL). "
+                "Revisa que la función 'ajustar_stock' esté creada como SECURITY DEFINER y que exista "
+                "un producto con ese id."
+            )
         return res.data
     except Exception as e:
         st.error(f"⚠️ Error al ajustar stock del producto {producto_id}: {e}")
