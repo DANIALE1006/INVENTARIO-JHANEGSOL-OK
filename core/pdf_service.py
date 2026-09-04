@@ -158,8 +158,36 @@ def generar_pdf_comprobante(
     return buffer.getvalue()
 
 def mostrar_previsualizacion_pdf(pdf_bytes: bytes, height: int = 550) -> None:
-    """Muestra un iframe con la previsualización del PDF en Streamlit."""
+    """
+    Renderiza la previsualización del comprobante en Streamlit.
+    1. Intenta renderizar como imagen nativa (pypdfium2 / pdf2image) para compatibilidad
+       total en Streamlit Cloud, navegadores móviles, Chrome y Safari.
+    2. Si no hay renderizador de imagen, usa fallback iframe base64.
+    """
+    st.markdown("### 👁️ Previsualización del Comprobante")
+
+    # Intento 1: Renderizado con pypdfium2 (ultra rápido, sin dependencias del SO)
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(pdf_bytes)
+        for i, page in enumerate(pdf):
+            image = page.render(scale=2).to_pil()
+            st.image(image, use_container_width=True, caption=f"Página {i+1}")
+        return
+    except Exception:
+        pass
+
+    # Intento 2: Renderizado con pdf2image (usando poppler de packages.txt)
+    try:
+        from pdf2image import convert_from_bytes
+        images = convert_from_bytes(pdf_bytes, dpi=150)
+        for i, img in enumerate(images):
+            st.image(img, use_container_width=True, caption=f"Página {i+1}")
+        return
+    except Exception:
+        pass
+
+    # Intento 3: Fallback iframe base64
     base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
     pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="{height}" type="application/pdf" style="border: 1px solid #CBD5E1; border-radius: 8px;"></iframe>'
-    st.markdown("### 👁️ Previsualización del Comprobante")
     st.markdown(pdf_display, unsafe_allow_html=True)
