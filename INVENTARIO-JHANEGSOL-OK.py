@@ -25,7 +25,6 @@ def init_supabase() -> Client:
             key = st.secrets["SUPABASE_KEY"]
         else:
             url = "https://oqafvzwwooxkohkdmatv.supabase.co"
-
             key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
 
         return create_client(url, key)
@@ -71,35 +70,30 @@ def ejecutar_consulta(
         st.error(f"⚠️ Error en base de datos (Tabla '{tabla}'): {e}")
         return None
 
-# --- AJUSTE ATÓMICO DE STOCK (NUEVO) ---
-# Requiere crear esta función en Supabase (SQL Editor) UNA sola vez:
+# --- AJUSTE ATÓMICO DE STOCK ---
+# Asegúrate de haber ejecutado en el SQL Editor de Supabase:
 #
-# create or replace function ajustar_stock(p_id bigint, p_delta integer)
-# returns integer as $$
-# declare
-#   nuevo_stock integer;
-# begin
-#   update productos
-#   set stock = stock + p_delta
-#   where id = p_id
-#   returning stock into nuevo_stock;
-#   return nuevo_stock;
-# end;
-# $$ language plpgsql;
-#
-# Esta función hace el ajuste directamente en la base de datos (stock = stock + delta),
-# evitando el patrón "leer stock -> calcular en Python -> escribir stock" que es propenso
-# a condiciones de carrera y a duplicaciones si la función se invoca más de una vez.
+# CREATE OR REPLACE FUNCTION ajustar_stock(p_id bigint, p_delta integer)
+# RETURNS integer AS $$
+# DECLARE
+#    nuevo_stock integer;
+# BEGIN
+#    UPDATE productos
+#    SET stock = stock + p_delta
+#    WHERE id = p_id
+#    RETURNING stock INTO nuevo_stock;
+#    RETURN nuevo_stock;
+# END;
+# $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 def ajustar_stock_producto(producto_id, delta):
     """delta negativo para descontar (ventas), positivo para reponer (notas de crédito, anulaciones, ingresos)."""
     try:
         res = supabase.rpc("ajustar_stock", {"p_id": producto_id, "p_delta": int(delta)}).execute()
         if res.data is None:
-            # La función no afectó ninguna fila (posible bloqueo por RLS, id inexistente, etc.)
             st.error(
                 f"⚠️ El stock del producto {producto_id} no se actualizó (la función devolvió NULL). "
-                "Revisa que la función 'ajustar_stock' esté creada como SECURITY DEFINER y que exista "
-                "un producto con ese id."
+                "Revisa que la función 'ajustar_stock' esté creada en Supabase y que exista el producto."
             )
         return res.data
     except Exception as e:
@@ -119,7 +113,6 @@ if "pdf_generado" not in st.session_state:
 if "num_ultimo_comp" not in st.session_state:
     st.session_state.num_ultimo_comp = ""
 
-# NUEVO: bandera anti doble-clic para emisión de comprobantes
 if "procesando_emision" not in st.session_state:
     st.session_state.procesando_emision = False
 
@@ -250,7 +243,6 @@ def comprobante_existe(serie_numero):
 
 # --- EMISIÓN DE VENTAS ---
 def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen):
-    # NUEVO: guardia anti doble-clic
     if st.session_state.procesando_emision:
         st.warning("⏳ Ya se está procesando una emisión, por favor espera.")
         return
@@ -307,9 +299,9 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
                 "precio_unitario": float(item["precio_unitario"]),
             }
             ejecutar_consulta("detalle_comprobante", "insert", det)
-            # El stock se descuenta automáticamente por el trigger 'tr_descontar_stock_venta'
-            # al insertar en detalle_comprobante. NO se ajusta manualmente aquí para evitar
-            # duplicar el descuento.
+            
+            # Descuento directo de stock para ventas
+            ajustar_stock_producto(item["id"], -int(item["cantidad"]))
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
             tipo_doc, serie_num, cliente_nom, cliente_doc,
@@ -323,7 +315,6 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
 
 # --- EMISIÓN DE NOTAS DE CRÉDITO Y DÉBITO ---
 def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota):
-    # NUEVO: guardia anti doble-clic
     if st.session_state.procesando_emision:
         st.warning("⏳ Ya se está procesando una emisión, por favor espera.")
         return
@@ -388,9 +379,13 @@ def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, 
                     "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
                 }
                 ejecutar_consulta("devoluciones", "insert", reg_dev)
-                # El stock se repone automáticamente por el trigger 'tr_descontar_stock_venta'
-                # (rama NOTA DE CRÉDITO) al insertar en detalle_comprobante. NO se ajusta
-                # manualmente aquí para evitar duplicar el aumento.
+                
+                # CORRECCIÓN: Se incrementa el stock de forma explícita (+cantidad)
+                ajustar_stock_producto(p_id, cantidad)
+
+            elif tipo_nota == "NOTA DE DÉBITO":
+                # En caso de Nota de Débito, se descuenta el stock adicional
+                ajustar_stock_producto(p_id, -cantidad)
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
             tipo_nota, serie_nota, cliente_nom, cliente_doc,
@@ -536,8 +531,6 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
 
             if st.form_submit_button("📥 Registrar Ingreso y Aumentar Stock"):
                 prod_info = dict_prods[prod_sel]
-                # Aquí se actualizan stock Y costo a la vez, así que se mantiene el update directo
-                # (no se usa ajustar_stock_producto porque también cambia el costo unitario).
                 nuevo_stock = prod_info["stock"] + cant_ingreso
                 upd = ejecutar_consulta(
                     "productos", "update",
@@ -651,7 +644,6 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
         col_m3.metric("TOTAL", f"S/. {total_gen:.2f}")
 
         st.divider()
-        # NUEVO: botón deshabilitado mientras se procesa una emisión, evita doble clic
         if st.button(
             f"🖨️ EMITIR {tipo_doc}",
             type="primary",
@@ -742,117 +734,21 @@ elif menu == "📝 Notas de Crédito y Débito":
                 st.write("---")
                 st.metric("Total de la Nota", f"S/. {tot_nc:.2f}")
 
-                # NUEVO: botón deshabilitado mientras se procesa una emisión, evita doble clic
                 if st.button(
                     f"🖨️ EMITIR {tipo_nota}",
                     type="primary",
+                    use_container_width=True,
                     disabled=st.session_state.procesando_emision,
                 ):
                     emitir_nota(
-                        tipo_nota, serie_nota, c_info["cliente_nombre"],
-                        c_info["cliente_documento"], sub_nc, igv_nc, tot_nc,
-                        doc_ref, cat_motivo, motivo_nota
+                        tipo_nota,
+                        serie_nota,
+                        c_info["cliente_nombre"],
+                        c_info["cliente_documento"],
+                        sub_nc,
+                        igv_nc,
+                        tot_nc,
+                        doc_ref,
+                        cat_motivo,
+                        motivo_nota,
                     )
-
-            if st.session_state.pdf_generado:
-                st.balloons()
-                st.download_button(
-                    label="📄 Descargar Nota en PDF",
-                    data=st.session_state.pdf_generado,
-                    file_name=f"{st.session_state.num_ultimo_comp}.pdf",
-                    mime="application/pdf",
-                )
-                mostrar_previsualizacion_pdf(st.session_state.pdf_generado)
-        else:
-            st.warning("⚠️ No se encontró el comprobante de referencia especificado.")
-
-# -------------------------------------------------------------------
-# 7. HISTÓRICO Y ANULACIÓN DE COMPROBANTES
-# -------------------------------------------------------------------
-elif menu == "📊 Histórico y Anulación de Comprobantes":
-    st.header("📊 Histórico General y Anulación de Comprobantes")
-    comps = ejecutar_consulta("comprobantes", order_col="id", desc=True)
-    if comps:
-        df_comps = pd.DataFrame(comps)
-        st.dataframe(df_comps, use_container_width=True)
-
-        st.divider()
-        st.subheader("❌ Anular / Eliminar Comprobante")
-
-        comp_sel_num = st.selectbox("Seleccione el N° de Comprobante a anular", df_comps["serie_numero"].tolist())
-        reponer_stock = st.checkbox("🔄 Reponer stock de productos automáticamente al anular", value=True)
-
-        if st.button("🚫 Anular Comprobante", type="primary"):
-            comp_obj = next((c for c in comps if c["serie_numero"] == comp_sel_num), None)
-            if comp_obj:
-                c_id = comp_obj["id"]
-
-                # Reposición opcional del stock (AJUSTE ATÓMICO)
-                if reponer_stock:
-                    dets = ejecutar_consulta("detalle_comprobante", eq_col="comprobante_id", eq_val=c_id)
-                    if dets:
-                        for d in dets:
-                            p_id = d["producto_id"]
-                            cant = d["cantidad"]
-                            ajustar_stock_producto(p_id, cant)
-
-                # Eliminar detalles e registro principal
-                ejecutar_consulta("detalle_comprobante", "delete", eq_col="comprobante_id", eq_val=c_id)
-                ejecutar_consulta("comprobantes", "delete", eq_col="id", eq_val=c_id)
-
-                st.success(f"✅ Comprobante {comp_sel_num} anulado exitosamente.")
-                st.rerun()
-
-# -------------------------------------------------------------------
-# 8. ESTADÍSTICAS Y MÉTRICAS
-# -------------------------------------------------------------------
-elif menu == "📈 Estadísticas y Métricas de Negocio":
-    st.header("📈 Métricas del Negocio y Análisis de Rendimiento")
-
-    comps = ejecutar_consulta("comprobantes")
-    if comps:
-        df_comps = pd.DataFrame(comps)
-        total_ventas = df_comps["total"].sum()
-        cant_ventas = len(df_comps)
-
-        c1, c2 = st.columns(2)
-        c1.metric("Ventas Totales Registradas", f"S/. {total_ventas:.2f}")
-        c2.metric("Comprobantes Emitidos", cant_ventas)
-
-    st.divider()
-
-    # --- 1. PRODUCTOS MÁS VENDIDOS ---
-    st.subheader("🔥 Productos Más Vendidos")
-    res_detalles = supabase.table("detalle_comprobante").select("cantidad, producto_id, productos(codigo, descripcion)").execute()
-
-    if res_detalles.data:
-        items_list = []
-        for d in res_detalles.data:
-            prod_info = d.get("productos") or {}
-            items_list.append({
-                "Código": prod_info.get("codigo", "N/A"),
-                "Producto": prod_info.get("descripcion", "Sin nombre"),
-                "Cantidad Vendida": d.get("cantidad", 0)
-            })
-        df_vendidos = pd.DataFrame(items_list)
-        df_ranking = df_vendidos.groupby(["Código", "Producto"])["Cantidad Vendida"].sum().reset_index()
-        df_ranking = df_ranking.sort_values(by="Cantidad Vendida", ascending=False)
-
-        col_tbl, col_chart = st.columns([2, 2])
-        with col_tbl:
-            st.dataframe(df_ranking, use_container_width=True)
-        with col_chart:
-            st.bar_chart(data=df_ranking, x="Producto", y="Cantidad Vendida")
-
-    # --- 2. ALERTAS DE QUIEBRE DE STOCK ---
-    st.subheader("⚠️ Alertas de Quiebre / Stock Crítico")
-    prods_stock = ejecutar_consulta("productos")
-    if prods_stock:
-        df_stock = pd.DataFrame(prods_stock)
-        df_critico = df_stock[df_stock["stock"] <= df_stock["stock_minimo"]]
-
-        if not df_critico.empty:
-            st.warning(f"⚠️ Se encontraron {len(df_critico)} productos con stock igual o inferior a su límite mínimo:")
-            st.dataframe(df_critico[["codigo", "marca", "descripcion", "stock", "stock_minimo"]], use_container_width=True)
-        else:
-            st.success("✅ Todos los productos mantienen niveles aceptables de inventario.")
