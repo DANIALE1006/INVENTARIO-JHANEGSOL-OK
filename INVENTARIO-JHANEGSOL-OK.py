@@ -1,13 +1,13 @@
-from datetime import datetime
 import io
-from pdf2image import convert_from_bytes
+import base64
+from datetime import datetime
 import pandas as pd
+import streamlit as st
+from supabase import Client, create_client
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-import streamlit as st
-from supabase import Client, create_client
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
@@ -17,17 +17,13 @@ st.set_page_config(
 )
 
 # --- CONEXIÓN A SUPABASE ---
+SUPABASE_URL = "https://oqafvzwwooxkohkdmatv.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
+
 @st.cache_resource
 def init_supabase() -> Client:
     try:
-        if "SUPABASE_URL" in st.secrets and "SUPABASE_KEY" in st.secrets:
-            url = st.secrets["SUPABASE_URL"]
-            key = st.secrets["SUPABASE_KEY"]
-        else:
-            url = "https://oqafvzwwooxkohkdmatv.supabase.co"
-            key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9xYWZ2end3b294a29oa2RtYXR2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyNjc5MTcsImV4cCI6MjEwMzg0MzkxN30.t8XQWINbWs0x2FYs2heSCW8wsASLg39_xgYQ__tnUW8"
-
-        return create_client(url, key)
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception as e:
         st.error(f"❌ Error al conectar con Supabase: {e}")
         st.stop()
@@ -71,78 +67,31 @@ def ejecutar_consulta(
         return None
 
 # --- AJUSTE ATÓMICO DE STOCK ---
-# Asegúrate de haber ejecutado en el SQL Editor de Supabase:
-#
-# CREATE OR REPLACE FUNCTION ajustar_stock(p_id bigint, p_delta integer)
-# RETURNS integer AS $$
-# DECLARE
-#    nuevo_stock integer;
-# BEGIN
-#    UPDATE productos
-#    SET stock = stock + p_delta
-#    WHERE id = p_id
-#    RETURNING stock INTO nuevo_stock;
-#    RETURN nuevo_stock;
-# END;
-# $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 def ajustar_stock_producto(producto_id, delta):
-    """delta negativo para descontar (ventas), positivo para reponer (notas de crédito, anulaciones, ingresos)."""
     try:
         res = supabase.rpc("ajustar_stock", {"p_id": producto_id, "p_delta": int(delta)}).execute()
         if res.data is None:
-            st.error(
-                f"⚠️ El stock del producto {producto_id} no se actualizó (la función devolvió NULL). "
-                "Revisa que la función 'ajustar_stock' esté creada en Supabase y que exista el producto."
-            )
+            st.error(f"⚠️ El stock del producto {producto_id} no se actualizó (Devolvió NULL).")
         return res.data
     except Exception as e:
         st.error(f"⚠️ Error al ajustar stock del producto {producto_id}: {e}")
         return None
 
 # --- ESTADOS INDEPENDIENTES Y PROTEGIDOS ---
-if "carrito_ventas" not in st.session_state:
-    st.session_state.carrito_ventas = []
-
-if "carrito_nc" not in st.session_state:
-    st.session_state.carrito_nc = []
-
-if "pdf_generado" not in st.session_state:
-    st.session_state.pdf_generado = None
-
-if "num_ultimo_comp" not in st.session_state:
-    st.session_state.num_ultimo_comp = ""
-
-if "procesando_emision" not in st.session_state:
-    st.session_state.procesando_emision = False
+for key_state in ["carrito_ventas", "pdf_generado", "num_ultimo_comp", "procesando_emision"]:
+    if key_state not in st.session_state:
+        st.session_state[key_state] = [] if "carrito" in key_state else False if "procesando" in key_state else None
 
 # --- GENERADOR DE PDF ---
-def generar_pdf_comprobante(
-    tipo_doc,
-    serie_num,
-    cliente_nom,
-    cliente_doc,
-    items,
-    subtotal,
-    igv,
-    total_gen,
-    doc_referencia="",
-    motivo="",
-):
+def generar_pdf_comprobante(tipo_doc, serie_num, cliente_nom, cliente_doc, items, subtotal, igv, total_gen, doc_referencia="", motivo=""):
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30
-    )
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
     story = []
     styles = getSampleStyleSheet()
 
-    titulo_style = ParagraphStyle(
-        "Titulo", parent=styles["Heading1"], alignment=1, fontSize=16, leading=20, fontName="Helvetica-Bold"
-    )
+    titulo_style = ParagraphStyle("Titulo", parent=styles["Heading1"], alignment=1, fontSize=16, leading=20, fontName="Helvetica-Bold")
     subtitulo_style = ParagraphStyle("SubTitulo", parent=styles["Normal"], alignment=1, fontSize=10, leading=12)
-    comprobante_style = ParagraphStyle(
-        "Comp", parent=styles["Heading2"], alignment=1, fontSize=12, leading=15, fontName="Helvetica-Bold"
-    )
+    comprobante_style = ParagraphStyle("Comp", parent=styles["Heading2"], alignment=1, fontSize=12, leading=15, fontName="Helvetica-Bold")
     normal_style = styles["Normal"]
     derecha_style = ParagraphStyle("Derecha", parent=styles["Normal"], alignment=2)
     bold_derecha = ParagraphStyle("BoldDerecha", parent=styles["Normal"], alignment=2, fontName="Helvetica-Bold")
@@ -220,22 +169,14 @@ def generar_pdf_comprobante(
     return buffer.getvalue()
 
 def mostrar_previsualizacion_pdf(pdf_bytes):
-    try:
-        images = convert_from_bytes(pdf_bytes)
-        st.markdown("### 👁️ Previsualización del Comprobante")
-        for img in images:
-            st.image(img, use_column_width=True)
-    except Exception:
-        st.info("ℹ️ Para habilitar la vista previa visual de PDF, asegúrese de tener instalada la herramienta del sistema `poppler`.")
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+    st.markdown("### 👁️ Previsualización del Comprobante")
+    st.markdown(pdf_display, unsafe_allow_html=True)
 
 def comprobante_existe(serie_numero):
     try:
-        res = (
-            supabase.table("comprobantes")
-            .select("id")
-            .eq("serie_numero", serie_numero)
-            .execute()
-        )
+        res = supabase.table("comprobantes").select("id").eq("serie_numero", serie_numero).execute()
         return bool(res.data)
     except Exception as e:
         st.error(f"❌ Error verificando comprobante: {e}")
@@ -258,13 +199,7 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
             return
 
         for item in st.session_state.carrito_ventas:
-            res_prod = (
-                supabase.table("productos")
-                .select("stock, descripcion")
-                .eq("id", item["id"])
-                .single()
-                .execute()
-            )
+            res_prod = supabase.table("productos").select("stock, descripcion").eq("id", item["id"]).single().execute()
             if not res_prod.data:
                 st.error(f"❌ No se encontró el producto {item['descripcion']}.")
                 return
@@ -299,8 +234,6 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
                 "precio_unitario": float(item["precio_unitario"]),
             }
             ejecutar_consulta("detalle_comprobante", "insert", det)
-            
-            # Descuento directo de stock para ventas
             ajustar_stock_producto(item["id"], -int(item["cantidad"]))
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
@@ -314,31 +247,19 @@ def emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, t
         st.session_state.procesando_emision = False
 
 # --- EMISIÓN DE NOTAS DE CRÉDITO Y DÉBITO ---
-def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota):
+def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, total_gen, doc_ref, cat_motivo, motivo_nota, items_nota):
     if st.session_state.procesando_emision:
         st.warning("⏳ Ya se está procesando una emisión, por favor espera.")
         return
     st.session_state.procesando_emision = True
 
     try:
-        if not st.session_state.carrito_nc:
+        if not items_nota:
             st.error("❌ No hay ítems en la nota.")
             return
 
         if comprobante_existe(serie_nota):
             st.error(f"❌ La nota {serie_nota} ya existe.")
-            return
-
-        origen = (
-            supabase.table("comprobantes")
-            .select("id, serie_numero")
-            .eq("serie_numero", doc_ref)
-            .single()
-            .execute()
-        )
-
-        if not origen.data:
-            st.error(f"❌ No se encontró el comprobante original {doc_ref}.")
             return
 
         comp_data = {
@@ -358,7 +279,7 @@ def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, 
 
         comp_id = res.data[0]["id"]
 
-        for item in st.session_state.carrito_nc:
+        for item in items_nota:
             cantidad = int(item["cantidad"])
             p_id = item["id"]
 
@@ -379,21 +300,17 @@ def emitir_nota(tipo_nota, serie_nota, cliente_nom, cliente_doc, subtotal, igv, 
                     "motivo_devolucion": f"[{cat_motivo}] {motivo_nota}",
                 }
                 ejecutar_consulta("devoluciones", "insert", reg_dev)
-                
-                # CORRECCIÓN: Se incrementa el stock de forma explícita (+cantidad)
                 ajustar_stock_producto(p_id, cantidad)
 
             elif tipo_nota == "NOTA DE DÉBITO":
-                # En caso de Nota de Débito, se descuenta el stock adicional
                 ajustar_stock_producto(p_id, -cantidad)
 
         st.session_state.pdf_generado = generar_pdf_comprobante(
             tipo_nota, serie_nota, cliente_nom, cliente_doc,
-            st.session_state.carrito_nc, subtotal, igv, total_gen,
+            items_nota, subtotal, igv, total_gen,
             doc_referencia=doc_ref, motivo=motivo_nota
         )
         st.session_state.num_ultimo_comp = serie_nota
-        st.session_state.carrito_nc = []
         st.success(f"✅ {tipo_nota} {serie_nota} emitida correctamente.")
     finally:
         st.session_state.procesando_emision = False
@@ -410,8 +327,6 @@ menu = st.sidebar.radio(
         "📥 Ingresos (Compras / Entrada)",
         "🧾 Ventas Directas (Boletas y Facturas)",
         "📝 Notas de Crédito y Débito",
-        "📊 Histórico y Anulación de Comprobantes",
-        "📈 Estadísticas y Métricas de Negocio",
     ],
 )
 
@@ -514,7 +429,7 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
     provs = ejecutar_consulta("proveedores", consulta_type="select", data="id, nombre")
 
     if prods and provs:
-        dict_prods = {f"{p['codigo']} - {p['descripcion']} (Stock: {p['stock']})": p for p in prods}
+        dict_prods = {f"{p['codigo']} - {p['descripcion']} (Stock actual: {p['stock']})": p for p in prods}
         dict_provs = {pr["nombre"]: pr["id"] for pr in provs}
 
         with st.form("form_ingresos", clear_on_submit=True):
@@ -531,14 +446,11 @@ elif menu == "📥 Ingresos (Compras / Entrada)":
 
             if st.form_submit_button("📥 Registrar Ingreso y Aumentar Stock"):
                 prod_info = dict_prods[prod_sel]
-                nuevo_stock = prod_info["stock"] + cant_ingreso
-                upd = ejecutar_consulta(
-                    "productos", "update",
-                    data={"stock": nuevo_stock, "costo": nuevo_costo},
-                    eq_col="id", eq_val=prod_info["id"],
-                )
-                if upd:
-                    st.success(f"✅ Stock actualizado. Nuevo Stock: {nuevo_stock}")
+                ejecutar_consulta("productos", "update", data={"costo": nuevo_costo}, eq_col="id", eq_val=prod_info["id"])
+                res_stock = ajustar_stock_producto(prod_info["id"], cant_ingreso)
+
+                if res_stock is not None:
+                    st.success(f"✅ Stock actualizado. Nuevo Stock: {res_stock}")
                     st.rerun()
 
 # -------------------------------------------------------------------
@@ -552,10 +464,7 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
         tipo_doc = st.selectbox("Tipo de Comprobante *", ["BOLETA DE VENTA", "FACTURA", "TICKET DE VENTA"])
         prefijo = "F001" if tipo_doc == "FACTURA" else ("T001" if tipo_doc == "TICKET DE VENTA" else "B001")
 
-        ult_comps = ejecutar_consulta(
-            "comprobantes", consulta_type="select", data="serie_numero",
-            like_col="serie_numero", like_val=f"{prefijo}-%",
-        )
+        ult_comps = ejecutar_consulta("comprobantes", consulta_type="select", data="serie_numero", like_col="serie_numero", like_val=f"{prefijo}-%")
         siguiente_num = 1
         if ult_comps:
             numeros = [
@@ -644,12 +553,7 @@ elif menu == "🧾 Ventas Directas (Boletas y Facturas)":
         col_m3.metric("TOTAL", f"S/. {total_gen:.2f}")
 
         st.divider()
-        if st.button(
-            f"🖨️ EMITIR {tipo_doc}",
-            type="primary",
-            use_container_width=True,
-            disabled=st.session_state.procesando_emision,
-        ):
+        if st.button(f"🖨️ EMITIR {tipo_doc}", type="primary", use_container_width=True, disabled=st.session_state.procesando_emision):
             emitir_venta(tipo_doc, serie_num, cliente_nom, cliente_doc, subtotal, igv, total_gen)
 
     if st.session_state.pdf_generado:
@@ -694,61 +598,41 @@ elif menu == "📝 Notas de Crédito y Débito":
             c_info = comp_orig[0]
             st.info(f"📌 **Comprobante Encontrado:** {c_info['cliente_nombre']} | Doc: {c_info['cliente_documento']} | Total Original: S/. {c_info['total']}")
 
-            detalles = (
-                supabase.table("detalle_comprobante")
-                .select("producto_id, cantidad, precio_unitario, productos(codigo, descripcion)")
-                .eq("comprobante_id", c_info["id"])
-                .execute()
-            )
+            detalles = supabase.table("detalle_comprobante").select("producto_id, cantidad, precio_unitario, productos(codigo, descripcion)").eq("comprobante_id", c_info["id"]).execute()
 
             if detalles.data:
                 st.write("### Seleccionar productos a incluir en la nota:")
-                for item in detalles.data:
-                    p_id = item["producto_id"]
-                    desc = item["productos"]["descripcion"]
-                    max_cant = item["cantidad"]
-                    pu = item["precio_unitario"]
+                
+                with st.form("form_nota_items"):
+                    items_a_procesar = []
+                    for item in detalles.data:
+                        p_id = item["producto_id"]
+                        desc = item["productos"]["descripcion"]
+                        max_cant = item["cantidad"]
+                        pu = float(item["precio_unitario"])
 
-                    c_check, c_cant = st.columns([3, 1])
-                    incluir = c_check.checkbox(f"{desc} (Máx. original: {max_cant})", key=f"nc_chk_{p_id}")
-                    cant_nc = c_cant.number_input("Cant. Nota", min_value=1, max_value=max_cant, value=max_cant, key=f"nc_cant_{p_id}")
+                        c_check, c_cant = st.columns([3, 1])
+                        incluir = c_check.checkbox(f"{desc} (Máx. original: {max_cant})", key=f"nc_chk_{p_id}")
+                        cant_nc = c_cant.number_input("Cant. Nota", min_value=1, max_value=max_cant, value=max_cant, key=f"nc_cant_{p_id}")
 
-                    if incluir:
-                        ya_estaba = next((x for x in st.session_state.carrito_nc if x["id"] == p_id), None)
-                        if ya_estaba:
-                            ya_estaba["cantidad"] = cant_nc
-                            ya_estaba["subtotal"] = cant_nc * pu
-                        else:
-                            st.session_state.carrito_nc.append({
+                        if incluir:
+                            items_a_procesar.append({
                                 "id": p_id, "descripcion": desc, "cantidad": cant_nc,
                                 "precio_unitario": pu, "subtotal": cant_nc * pu
                             })
+
+                    btn_emitir_nota = st.form_submit_button(f"🖨️ EMITIR {tipo_nota}")
+
+                if btn_emitir_nota:
+                    if not items_a_procesar:
+                        st.error("❌ Marca al menos un producto para incluir en la Nota.")
                     else:
-                        st.session_state.carrito_nc = [x for x in st.session_state.carrito_nc if x["id"] != p_id]
+                        tot_nc = sum(x["subtotal"] for x in items_a_procesar)
+                        sub_nc = tot_nc / 1.18
+                        igv_nc = tot_nc - sub_nc
 
-            if st.session_state.carrito_nc:
-                tot_nc = sum(x["subtotal"] for x in st.session_state.carrito_nc)
-                sub_nc = tot_nc / 1.18
-                igv_nc = tot_nc - sub_nc
-
-                st.write("---")
-                st.metric("Total de la Nota", f"S/. {tot_nc:.2f}")
-
-                if st.button(
-                    f"🖨️ EMITIR {tipo_nota}",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=st.session_state.procesando_emision,
-                ):
-                    emitir_nota(
-                        tipo_nota,
-                        serie_nota,
-                        c_info["cliente_nombre"],
-                        c_info["cliente_documento"],
-                        sub_nc,
-                        igv_nc,
-                        tot_nc,
-                        doc_ref,
-                        cat_motivo,
-                        motivo_nota,
-                    )
+                        emitir_nota(
+                            tipo_nota, serie_nota, c_info["cliente_nombre"],
+                            c_info["cliente_documento"], sub_nc, igv_nc, tot_nc,
+                            doc_ref, cat_motivo, motivo_nota, items_a_procesar
+                        )
