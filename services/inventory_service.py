@@ -3,7 +3,7 @@ Servicio de gestión de inventario, productos y compras (ingresos).
 """
 from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
-from core.database import ejecutar_consulta, ajustar_stock_rpc
+from core.database import ejecutar_consulta, ajustar_stock_rpc, get_supabase_client
 
 def obtener_catalogo_productos() -> List[Dict[str, Any]]:
     """Obtiene la lista completa de productos ordenados por código."""
@@ -132,3 +132,55 @@ def obtener_metricas_inventario() -> Dict[str, Any]:
         "valor_venta": valor_venta,
         "items_quiebre": items_quiebre,
     }
+
+# ==========================================
+# NUEVAS FUNCIONES ANALÍTICAS
+# ==========================================
+
+def obtener_productos_quiebre_stock() -> list:
+    """Devuelve los productos cuyo stock actual es menor o igual al mínimo."""
+    prods = obtener_catalogo_productos()
+    if not prods:
+        return []
+    df = pd.DataFrame(prods)
+    df["stock"] = pd.to_numeric(df["stock"], errors="coerce").fillna(0)
+    df["stock_minimo"] = pd.to_numeric(df["stock_minimo"], errors="coerce").fillna(5)
+    
+    quiebres = df[df["stock"] <= df["stock_minimo"]]
+    return quiebres.to_dict(orient="records")
+
+def obtener_top_productos_vendidos(limit: int = 5) -> list:
+    """Calcula los productos más vendidos sumando las cantidades de detalle_comprobante."""
+    client = get_supabase_client()
+    try:
+        res = client.table("detalle_comprobante").select("producto_id, cantidad, productos(codigo, descripcion, marca)").execute()
+        if not res.data:
+            return []
+        
+        data = []
+        for item in res.data:
+            prod_info = item.get("productos") or {}
+            data.append({
+                "codigo": prod_info.get("codigo", "S/C"),
+                "descripcion": prod_info.get("descripcion", "Producto Desconocido"),
+                "marca": prod_info.get("marca", ""),
+                "cantidad_vendida": int(item.get("cantidad", 0))
+            })
+            
+        df = pd.DataFrame(data)
+        top_df = df.groupby(["codigo", "descripcion", "marca"])["cantidad_vendida"].sum().reset_index()
+        top_df = top_df.sort_values(by="cantidad_vendida", ascending=False).head(limit)
+        return top_df.to_dict(orient="records")
+    except Exception as e:
+        print(f"Error calculando top ventas: {e}")
+        return []
+
+def obtener_sugerencia_proveedores() -> list:
+    """Muestra la relación de productos con su proveedor sugerido y costo asignado."""
+    prods = obtener_catalogo_productos()
+    if not prods:
+        return []
+    df = pd.DataFrame(prods)
+    cols = ["codigo", "descripcion", "costo", "precio", "proveedor"]
+    cols_existentes = [c for c in cols if c in df.columns]
+    return df[cols_existentes].to_dict(orient="records")
