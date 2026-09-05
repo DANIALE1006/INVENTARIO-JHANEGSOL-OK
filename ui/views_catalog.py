@@ -8,6 +8,9 @@ from services.inventory_service import (
     obtener_catalogo_productos,
     crear_producto,
     obtener_metricas_inventario,
+    obtener_productos_quiebre_stock,
+    obtener_top_productos_vendidos,
+    obtener_sugerencia_proveedores,
 )
 from core.database import ejecutar_consulta
 
@@ -33,10 +36,80 @@ def render_views_catalog() -> None:
         render_metric_card("Stock Crítico", f"{metrics['items_quiebre']}", "En alerta o quiebre", alert=(metrics['items_quiebre'] > 0))
 
     st.write("")
+    st.divider()
 
-    # 2. Formulario para Nuevo Producto
+    # 2. Reportes y Métricas Analíticas
+    st.subheader("📊 Reportes Analíticos de Inventario y Ventas")
+    
+    tab_quiebre, tab_top, tab_prov = st.tabs([
+        "⚠️ Productos en Quiebre de Stock", 
+        "🔥 Productos Más Vendidos", 
+        "🏢 Proveedores por Producto"
+    ])
+
+    with tab_quiebre:
+        quiebres = obtener_productos_quiebre_stock()
+        if quiebres:
+            st.error(f"Se encontraron **{len(quiebres)}** productos en nivel crítico o quiebre de stock.")
+            df_q = pd.DataFrame(quiebres)
+            cols_q = [c for c in ["codigo", "marca", "descripcion", "stock", "stock_minimo", "proveedor"] if c in df_q.columns]
+            st.dataframe(
+                df_q[cols_q],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "codigo": st.column_config.TextColumn("Código"),
+                    "marca": st.column_config.TextColumn("Marca"),
+                    "descripcion": st.column_config.TextColumn("Descripción"),
+                    "stock": st.column_config.NumberColumn("Stock Actual"),
+                    "stock_minimo": st.column_config.NumberColumn("Stock Mínimo"),
+                    "proveedor": st.column_config.TextColumn("Proveedor Sugerido"),
+                }
+            )
+        else:
+            st.success("✅ Todos los productos cuentan con stock superior al umbral mínimo.")
+
+    with tab_top:
+        top_ventas = obtener_top_productos_vendidos(limit=10)
+        if top_ventas:
+            df_top = pd.DataFrame(top_ventas)
+            st.markdown("**Top 10 Productos con Mayor Rotación:**")
+            st.dataframe(
+                df_top,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "codigo": st.column_config.TextColumn("Código"),
+                    "descripcion": st.column_config.TextColumn("Descripción del Producto"),
+                    "marca": st.column_config.TextColumn("Marca"),
+                    "cantidad_vendida": st.column_config.NumberColumn("Total Unidades Vendidas"),
+                }
+            )
+        else:
+            st.info("ℹ️ Aún no hay registros de ventas suficientes para construir el ranking.")
+
+    with tab_prov:
+        provs_prod = obtener_sugerencia_proveedores()
+        if provs_prod:
+            df_p = pd.DataFrame(provs_prod)
+            st.markdown("**Relación de Productos con su Proveedor Sugerido y Costos:**")
+            st.dataframe(
+                df_p,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "codigo": st.column_config.TextColumn("Código"),
+                    "descripcion": st.column_config.TextColumn("Descripción"),
+                    "costo": st.column_config.NumberColumn("Costo Unit. (S/.)", format="S/. %.2f"),
+                    "precio": st.column_config.NumberColumn("P. Venta (S/.)", format="S/. %.2f"),
+                    "proveedor": st.column_config.TextColumn("Proveedor Asignado"),
+                }
+            )
+
+    st.divider()
+
+    # 3. Formulario para Nuevo Producto
     with st.expander("➕ Registrar Nuevo Producto al Catálogo", expanded=False):
-        # Obtener lista de proveedores para el selector
         proveedores = ejecutar_consulta("proveedores", consulta_type="select", data="nombre")
         nombres_prov = [p["nombre"] for p in proveedores] if proveedores else []
 
@@ -79,7 +152,7 @@ def render_views_catalog() -> None:
 
     st.divider()
 
-    # 3. Listado y Filtros
+    # 4. Listado y Filtros Generales
     st.subheader("🔍 Listado General de Productos")
     productos = obtener_catalogo_productos()
     
@@ -105,7 +178,6 @@ def render_views_catalog() -> None:
     elif filtro_stock == "Sin Stock (=0)":
         df_prod = df_prod[df_prod["stock"] == 0]
 
-    # Reordenar columnas para mejor lectura
     cols_order = ["codigo", "marca", "descripcion", "stock", "stock_minimo", "precio", "costo", "proveedor"]
     cols_display = [c for c in cols_order if c in df_prod.columns]
     
