@@ -2,6 +2,5 @@ streamlit
 supabase
 pandas
 reportlab
-pdf2image
 Pillow
 pypdfium2
