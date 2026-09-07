@@ -3,6 +3,3 @@ supabase
 pandas
 reportlab
 pdf2image
-Pillow
-pypdfium2
-poppler-utils
