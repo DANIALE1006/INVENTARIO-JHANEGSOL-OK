@@ -198,34 +198,11 @@ def render_views_inbound() -> None:
             fig_pie.update_traces(textposition="inside", textinfo="percent+label")
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # 3. GRÁFICO DE LÍNEAS (Tendencia de Movimientos / Salidas)
+        # 3. SECCIÓN TENDENCIA (Sin realizar consulta a tabla inexistente)
         with col_c2:
             st.markdown("#### 📈 3. Tendencia de Salidas / Flujo de Stock")
             st.caption("Comportamiento mensual para proyección de reabastecimiento.")
-            
-            try:
-                movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
-                if movs and isinstance(movs, list):
-                    df_movs = pd.DataFrame(movs)
-                    if "fecha" in df_movs.columns:
-                        df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
-                        df_trend = df_movs.groupby(df_movs["fecha"].dt.to_period("M"))["cantidad"].sum().reset_index()
-                        df_trend["fecha"] = df_trend["fecha"].astype(str)
-
-                        fig_line = px.line(
-                            df_trend,
-                            x="fecha",
-                            y="cantidad",
-                            markers=True,
-                            labels={"fecha": "Mes", "cantidad": "Unidades Moviéndose"},
-                        )
-                        st.plotly_chart(fig_line, use_container_width=True)
-                    else:
-                        st.info("💡 La tabla de movimientos no registra columna de fecha aún.")
-                else:
-                    st.info("💡 Sin registros históricos en movimientos para trazar la tendencia.")
-            except Exception:
-                st.info("💡 La tabla 'movimientos_inventario' aún no está registrada en la base de datos.")
+            st.info("💡 Módulo listo. Requiere crear la tabla de historial de movimientos para activar el gráfico de tendencia temporal.")
 
         st.markdown("---")
 
