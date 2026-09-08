@@ -4,3 +4,4 @@ pandas
 reportlab
 Pillow
 pypdfium2
+plotly
