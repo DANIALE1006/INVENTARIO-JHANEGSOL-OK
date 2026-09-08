@@ -1,8 +1,10 @@
 """
 Vista de Registro de Ingresos de Mercadería (Compras / Abastecimiento) y Dashboard Estadístico.
 """
+from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 from ui.components import render_header
 from core.database import ejecutar_consulta
@@ -154,41 +156,91 @@ def render_views_inbound() -> None:
             st.info("No hay datos de productos suficientes para mostrar el dashboard.")
             return
 
+        # ------------------------------------------
+        # FILTRO DE FECHAS (GLOBAL PARA DASHBOARD)
+        # ------------------------------------------
+        st.markdown("#### 📅 Filtro por Rango de Fechas")
+        col_f1, col_f2 = st.columns(2)
+
+        # Rango por defecto: últimos 6 meses a la fecha actual
+        fecha_fin_default = datetime.now().date()
+        fecha_inicio_default = fecha_fin_default - timedelta(days=180)
+
+        with col_f1:
+            fecha_inicio = st.date_input("Fecha Inicio", value=fecha_inicio_default)
+        with col_f2:
+            fecha_fin = st.date_input("Fecha Fin", value=fecha_fin_default)
+
+        st.markdown("---")
+
+        # Cargar movimientos de inventario con join a productos para traer el costo
+        movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
+        df_movs = pd.DataFrame()
+
+        if movs and isinstance(movs, list):
+            df_movs = pd.DataFrame(movs)
+            if "fecha" in df_movs.columns:
+                df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
+                # Filtrar el dataframe de movimientos por el rango de fechas seleccionado
+                mask = (df_movs["fecha"].dt.date >= fecha_inicio) & (df_movs["fecha"].dt.date <= fecha_fin)
+                df_movs = df_movs.loc[mask]
+
         df_prods = pd.DataFrame(prods)
         df_prods["stock"] = pd.to_numeric(df_prods["stock"], errors="coerce").fillna(0)
         df_prods["costo"] = pd.to_numeric(df_prods["costo"], errors="coerce").fillna(0.0)
-        
-        # Asignar valores por defecto para evitar errores de columnas no existentes en BD
         df_prods["stock_minimo"] = 5
         df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
 
-        # 1. GRÁFICO DE BARRAS (Stock Actual)
-        st.markdown("#### 📊 1. Nivel de Stock Actual por Producto")
-        st.caption("Visión general para detectar excesos o desabastecimiento inmediato.")
-        
-        fig_stock = px.bar(
-            df_prods,
-            x="descripcion",
-            y="stock",
-            color="stock",
-            color_continuous_scale="Viridis",
-            text_auto=True,
-            labels={"descripcion": "Producto", "stock": "Stock Actual"},
-        )
-        fig_stock.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig_stock, use_container_width=True)
+        # ------------------------------------------
+        # 1. GRÁFICO COMPARATIVO EN MONTOS (INGRESOS VS SALIDAS S/.)
+        # ------------------------------------------
+        st.markdown("#### 💵 1. Ingresos vs. Salidas en Montos (S/.)")
+        st.caption("Evolución del flujo financiero de inventario en el intervalo seleccionado.")
+
+        if not df_movs.empty and "tipo" in df_movs.columns:
+            # Unir con productos para obtener el costo de cada ítem
+            df_movs_monto = df_movs.merge(
+                df_prods[["id", "costo"]],
+                left_on="producto_id",
+                right_on="id",
+                how="left",
+            )
+            df_movs_monto["costo"] = df_movs_monto["costo"].fillna(0.0)
+            df_movs_monto["monto"] = df_movs_monto["cantidad"] * df_movs_monto["costo"]
+            df_movs_monto["mes_año"] = df_movs_monto["fecha"].dt.strftime("%Y-%m")
+
+            df_resumen_montos = (
+                df_movs_monto.groupby(["mes_año", "tipo"])["monto"].sum().reset_index()
+            )
+
+            fig_montos = px.bar(
+                df_resumen_montos,
+                x="mes_año",
+                y="monto",
+                color="tipo",
+                barmode="group",
+                text_auto=".2f",
+                labels={"mes_año": "Período", "monto": "Monto Total (S/.)", "tipo": "Tipo de Movimiento"},
+                color_discrete_map={"INGRESO": "#2E7D32", "SALIDA": "#C62828"},
+            )
+            fig_montos.update_layout(xaxis_title="Mes", yaxis_title="Soles (S/.)")
+            st.plotly_chart(fig_montos, use_container_width=True)
+        else:
+            st.info("💡 No hay registros de movimientos en el rango de fechas seleccionado.")
 
         st.markdown("---")
 
         col_c1, col_c2 = st.columns(2)
 
-        # 2. MAYOR INVERSIÓN EN STOCK (ANÁLISIS DE CAPITAL RETENIDO)
+        # ------------------------------------------
+        # 2. MAYOR INVERSIÓN EN STOCK
+        # ------------------------------------------
         with col_c1:
             st.markdown("#### 💰 2. Mayor Inversión en Stock (Top Productos)")
-            st.caption("Productos que concentran el mayor valor monetario inmovilizado.")
-            
+            st.caption("Productos con mayor capital inmovilizado actualmente.")
+
             df_top_inversion = df_prods.sort_values(by="inversion_total", ascending=False).head(8)
-            
+
             fig_top_inv = px.bar(
                 df_top_inversion,
                 x="inversion_total",
@@ -197,54 +249,52 @@ def render_views_inbound() -> None:
                 text_auto=".2f",
                 labels={"inversion_total": "Inversión Total (S/.)", "descripcion": "Producto"},
                 color="inversion_total",
-                color_continuous_scale="Blues"
+                color_continuous_scale="Blues",
             )
             fig_top_inv.update_layout(
                 yaxis={"categoryorder": "total ascending"},
                 showlegend=False,
                 xaxis_title="Soles (S/.)",
-                yaxis_title=""
+                yaxis_title="",
             )
             st.plotly_chart(fig_top_inv, use_container_width=True)
 
-        # 3. GRÁFICO DE LÍNEAS (TENDENCIA DE FLUJO DE STOCK)
+        # ------------------------------------------
+        # 3. TENDENCIA DE UNIDADES MOVIDAS (UNIDADES)
+        # ------------------------------------------
         with col_c2:
-            st.markdown("#### 📈 3. Tendencia de Salidas / Flujo de Stock")
-            st.caption("Comportamiento mensual para proyección de reabastecimiento.")
-            
-            try:
-                movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
-                if movs and isinstance(movs, list):
-                    df_movs = pd.DataFrame(movs)
-                    if "fecha" in df_movs.columns:
-                        df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
-                        # Agrupar por Mes-Año
-                        df_movs["mes_año"] = df_movs["fecha"].dt.strftime("%Y-%m")
-                        df_trend = df_movs.groupby("mes_año")["cantidad"].sum().reset_index()
+            st.markdown("#### 📈 3. Flujo Físico de Salidas (Unidades)")
+            st.caption("Volumen de productos retirados en el período seleccionado.")
 
-                        fig_line = px.line(
-                            df_trend,
-                            x="mes_año",
-                            y="cantidad",
-                            markers=True,
-                            labels={"mes_año": "Mes", "cantidad": "Unidades Moviéndose"},
-                            color_discrete_sequence=["#2E7D32"]
-                        )
-                        fig_line.update_traces(line_width=3, marker_size=8)
-                        fig_line.update_layout(xaxis_title="Período", yaxis_title="Unidades")
-                        st.plotly_chart(fig_line, use_container_width=True)
-                    else:
-                        st.info("💡 La tabla 'movimientos_inventario' no posee la columna 'fecha'.")
+            if not df_movs.empty and "tipo" in df_movs.columns:
+                df_salidas = df_movs[df_movs["tipo"] == "SALIDA"].copy()
+                if not df_salidas.empty:
+                    df_salidas["mes_año"] = df_salidas["fecha"].dt.strftime("%Y-%m")
+                    df_trend = df_salidas.groupby("mes_año")["cantidad"].sum().reset_index()
+
+                    fig_line = px.line(
+                        df_trend,
+                        x="mes_año",
+                        y="cantidad",
+                        markers=True,
+                        labels={"mes_año": "Mes", "cantidad": "Unidades Salidas"},
+                        color_discrete_sequence=["#1565C0"],
+                    )
+                    fig_line.update_traces(line_width=3, marker_size=8)
+                    fig_line.update_layout(xaxis_title="Período", yaxis_title="Unidades")
+                    st.plotly_chart(fig_line, use_container_width=True)
                 else:
-                    st.info("💡 La tabla de movimientos está vacía actualmente.")
-            except Exception:
-                st.info("💡 Módulo listo. Requiere ejecutar el script SQL para crear la tabla de movimientos.")
+                    st.info("💡 No se registraron salidas en el intervalo de fechas seleccionado.")
+            else:
+                st.info("💡 No hay datos de movimientos para este rango.")
 
         st.markdown("---")
 
+        # ------------------------------------------
         # 4. TABLA DE ALERTA CON FORMATO CONDICIONAL
+        # ------------------------------------------
         st.markdown("#### 🚨 4. Alerta de Stock Crítico")
-        st.caption("Se resaltan automáticamente en rojo las filas cuyo stock es menor o igual al mínimo permitido (5 unidades).")
+        st.caption("Se resaltan en rojo los productos con stock menor o igual al mínimo (5 unidades).")
 
         def resaltar_bajo_stock(row):
             if row["stock"] <= row["stock_minimo"]:
@@ -252,10 +302,10 @@ def render_views_inbound() -> None:
             return [""] * len(row)
 
         df_alertas = df_prods[["codigo", "descripcion", "stock", "stock_minimo", "costo", "inversion_total"]]
-        
+
         styler = df_alertas.style.apply(resaltar_bajo_stock, axis=1).format({
             "costo": "S/ {:.2f}",
-            "inversion_total": "S/ {:.2f}"
+            "inversion_total": "S/ {:.2f}",
         })
 
         st.dataframe(styler, use_container_width=True, hide_index=True)
