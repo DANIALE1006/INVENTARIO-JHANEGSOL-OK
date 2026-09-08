@@ -16,11 +16,11 @@ def render_views_inbound() -> None:
         "📥",
     )
 
-    # Cargar catálogos iniciales
+    # Cargar datos solicitando SOLO columnas existentes en tu BD
     prods = ejecutar_consulta(
         "productos",
         consulta_type="select",
-        data="id, codigo, descripcion, stock, costo, categoria, stock_minimo",
+        data="id, codigo, descripcion, stock, costo",
         order_col="codigo",
     )
     provs = ejecutar_consulta(
@@ -157,8 +157,10 @@ def render_views_inbound() -> None:
         df_prods = pd.DataFrame(prods)
         df_prods["stock"] = pd.to_numeric(df_prods["stock"], errors="coerce").fillna(0)
         df_prods["costo"] = pd.to_numeric(df_prods["costo"], errors="coerce").fillna(0.0)
-        df_prods["stock_minimo"] = pd.to_numeric(df_prods.get("stock_minimo", 5), errors="coerce").fillna(5)
-        df_prods["categoria"] = df_prods.get("categoria", "General").fillna("General")
+        
+        # Asignar valores por defecto para evitar el error de BD
+        df_prods["stock_minimo"] = 5
+        df_prods["categoria"] = "General"
         df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
 
         # 1. GRÁFICO DE BARRAS (Stock Actual)
@@ -183,7 +185,7 @@ def render_views_inbound() -> None:
 
         # 2. GRÁFICO CIRCULAR / ANILLO (Composición por Categorías)
         with col_c1:
-            st.markdown("#### 🍩 2. Valor del Inventario por Categoria")
+            st.markdown("#### 🍩 2. Valor del Inventario por Categoría")
             st.caption("Porcentaje de inversión total según el grupo o categoría.")
             
             fig_pie = px.pie(
@@ -226,7 +228,7 @@ def render_views_inbound() -> None:
 
         # 4. TABLA DE ALERTA CON FORMATO CONDICIONAL
         st.markdown("#### 🚨 4. Alerta de Stock Crítico")
-        st.caption("Se resaltan automáticamente en rojo las filas cuyo stock es menor o igual al mínimo permitido.")
+        st.caption("Se resaltan automáticamente en rojo las filas cuyo stock es menor o igual al mínimo permitido (5 unidades).")
 
         def resaltar_bajo_stock(row):
             if row["stock"] <= row["stock_minimo"]:
