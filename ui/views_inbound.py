@@ -1,5 +1,5 @@
 """
-Vista de Registro de Ingresos de Mercadería (Compras / Abastecimiento) y Dashboard Estadístico.
+Vista de Registro de Ingresos de Mercadería (Compras / Abastecimiento) y Dashboard Estadístico Avanzado.
 """
 from datetime import datetime, timedelta
 import pandas as pd
@@ -147,10 +147,10 @@ def render_views_inbound() -> None:
             st.info("💡 El lote de compra está vacío. Selecciona un producto y presiona 'Añadir'.")
 
     # ==========================================
-    # PESTAÑA 2: DASHBOARD Y ANALÍTICA
+    # PESTAÑA 2: DASHBOARD Y ANALÍTICA AVANZADA
     # ==========================================
     with tab_analytics:
-        st.markdown("### 📈 Control Visual e Indicadores de Inventario")
+        st.markdown("### 📈 Control Visual, KPIs e Indicadores de Inventario")
 
         if not prods or not isinstance(prods, list):
             st.info("No hay datos de productos suficientes para mostrar el dashboard.")
@@ -162,7 +162,6 @@ def render_views_inbound() -> None:
         st.markdown("#### 📅 Filtro por Rango de Fechas")
         col_f1, col_f2 = st.columns(2)
 
-        # Rango por defecto: últimos 6 meses a la fecha actual
         fecha_fin_default = datetime.now().date()
         fecha_inicio_default = fecha_fin_default - timedelta(days=180)
 
@@ -173,7 +172,14 @@ def render_views_inbound() -> None:
 
         st.markdown("---")
 
-        # Cargar movimientos de inventario con join a productos para traer el costo
+        # Cargar productos
+        df_prods = pd.DataFrame(prods)
+        df_prods["stock"] = pd.to_numeric(df_prods["stock"], errors="coerce").fillna(0)
+        df_prods["costo"] = pd.to_numeric(df_prods["costo"], errors="coerce").fillna(0.0)
+        df_prods["stock_minimo"] = 5
+        df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
+
+        # Cargar movimientos de inventario
         movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
         df_movs = pd.DataFrame()
 
@@ -181,15 +187,86 @@ def render_views_inbound() -> None:
             df_movs = pd.DataFrame(movs)
             if "fecha" in df_movs.columns:
                 df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
-                # Filtrar el dataframe de movimientos por el rango de fechas seleccionado
                 mask = (df_movs["fecha"].dt.date >= fecha_inicio) & (df_movs["fecha"].dt.date <= fecha_fin)
                 df_movs = df_movs.loc[mask]
 
-        df_prods = pd.DataFrame(prods)
-        df_prods["stock"] = pd.to_numeric(df_prods["stock"], errors="coerce").fillna(0)
-        df_prods["costo"] = pd.to_numeric(df_prods["costo"], errors="coerce").fillna(0.0)
-        df_prods["stock_minimo"] = 5
-        df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
+        # ------------------------------------------
+        # CÁLCULO DE KPIS E INDICADORES CLAVE
+        # ------------------------------------------
+        costo_inventario_promedio = df_prods["inversion_total"].sum()
+
+        if not df_movs.empty and "tipo" in df_movs.columns:
+            df_movs_kpi = df_movs.merge(
+                df_prods[["id", "costo"]],
+                left_on="producto_id",
+                right_on="id",
+                how="left",
+            )
+            df_movs_kpi["costo"] = df_movs_kpi["costo"].fillna(0.0)
+            df_movs_kpi["monto"] = df_movs_kpi["cantidad"] * df_movs_kpi["costo"]
+
+            # Costo total de ventas/salidas
+            costo_ventas = df_movs_kpi[df_movs_kpi["tipo"] == "SALIDA"]["monto"].sum()
+
+            # Productos con movimientos
+            prods_con_movimiento = df_movs_kpi["producto_id"].unique()
+            df_inmovilizados = df_prods[~df_prods["id"].isin(prods_con_movimiento)]
+            monto_inmovilizado = df_inmovilizados["inversion_total"].sum()
+            cant_inmovilizados = len(df_inmovilizados)
+        else:
+            costo_ventas = 0.0
+            monto_inmovilizado = costo_inventario_promedio
+            cant_inmovilizados = len(df_prods)
+
+        # Rotación de inventario = Costo de lo vendido / Inventario promedio
+        rotacion_inventario = (costo_ventas / costo_inventario_promedio) if costo_inventario_promedio > 0 else 0.0
+
+        # Días de permanencia (DII) en el rango seleccionado
+        dias_rango = max((fecha_fin - fecha_inicio).days, 1)
+        dias_inventario = (dias_rango / rotacion_inventario) if rotacion_inventario > 0 else 999.0
+
+        # Cobertura estimada en meses
+        salidas_mensuales_prom = (costo_ventas / (dias_rango / 30.4)) if dias_rango > 0 else 0.0
+        meses_cobertura = (costo_inventario_promedio / salidas_mensuales_prom) if salidas_mensuales_prom > 0 else 99.0
+
+        # Tarjetas de Métricas (KPIs)
+        st.markdown("#### 🎯 Indicadores Clave de Desempeño (KPIs)")
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+
+        with kpi1:
+            st.metric(
+                "Valor Total Stock",
+                f"S/ {costo_inventario_promedio:,.2f}",
+                help="Capital invertido en inventario actualmente."
+            )
+        with kpi2:
+            st.metric(
+                "Rotación de Stock",
+                f"{rotacion_inventario:.2f} x",
+                help="Número de veces que el inventario se ha vendido y reemplazado en el período."
+            )
+        with kpi3:
+            st.metric(
+                "Días en Almacén",
+                f"{dias_inventario:.0f} días" if dias_inventario < 999 else "N/D",
+                help="Días promedio que tarda un producto en rotar."
+            )
+        with kpi4:
+            st.metric(
+                "Stock Inmovilizado",
+                f"S/ {monto_inmovilizado:,.2f}",
+                delta=f"{cant_inmovilizados} prod. sin rotar",
+                delta_color="inverse",
+                help="Monto de mercancía sin ningún movimiento en el intervalo seleccionado."
+            )
+        with kpi5:
+            st.metric(
+                "Cobertura Est.",
+                f"{meses_cobertura:.1f} meses" if meses_cobertura < 99 else "> 12 meses",
+                help="Tiempo estimado que dura el inventario actual sin reponer stock."
+            )
+
+        st.markdown("---")
 
         # ------------------------------------------
         # 1. GRÁFICO COMPARATIVO EN MONTOS (INGRESOS VS SALIDAS S/.)
@@ -198,7 +275,6 @@ def render_views_inbound() -> None:
         st.caption("Evolución del flujo financiero de inventario en el intervalo seleccionado.")
 
         if not df_movs.empty and "tipo" in df_movs.columns:
-            # Unir con productos para obtener el costo de cada ítem
             df_movs_monto = df_movs.merge(
                 df_prods[["id", "costo"]],
                 left_on="producto_id",
