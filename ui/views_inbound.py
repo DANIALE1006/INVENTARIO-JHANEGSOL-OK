@@ -150,7 +150,7 @@ def render_views_inbound() -> None:
     # PESTAÑA 2: DASHBOARD Y ANALÍTICA AVANZADA
     # ==========================================
     with tab_analytics:
-        st.markdown("### 📈 Control Visual, KPIs e Indicadores de Inventario")
+        st.markdown("### 📈 Control Visual, KPIs e Indicadores de Inventario Avanzados")
 
         if not prods or not isinstance(prods, list):
             st.info("No hay datos de productos suficientes para mostrar el dashboard.")
@@ -160,7 +160,7 @@ def render_views_inbound() -> None:
         # FILTRO DE FECHAS (GLOBAL PARA DASHBOARD)
         # ------------------------------------------
         st.markdown("#### 📅 Filtro por Rango de Fechas")
-        col_f1, col_f2 = st.columns(2)
+        col_f1, col_f2, col_f3 = st.columns([2, 2, 2])
 
         fecha_fin_default = datetime.now().date()
         fecha_inicio_default = fecha_fin_default - timedelta(days=180)
@@ -169,8 +169,6 @@ def render_views_inbound() -> None:
             fecha_inicio = st.date_input("Fecha Inicio", value=fecha_inicio_default)
         with col_f2:
             fecha_fin = st.date_input("Fecha Fin", value=fecha_fin_default)
-
-        st.markdown("---")
 
         # Cargar productos
         df_prods = pd.DataFrame(prods)
@@ -189,6 +187,22 @@ def render_views_inbound() -> None:
                 df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
                 mask = (df_movs["fecha"].dt.date >= fecha_inicio) & (df_movs["fecha"].dt.date <= fecha_fin)
                 df_movs = df_movs.loc[mask]
+
+        with col_f3:
+            st.write("")
+            st.write("")
+            # Opción para exportar reporte
+            if not df_prods.empty:
+                csv = df_prods.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar Reporte CSV",
+                    data=csv,
+                    file_name=f'reporte_inventario_{fecha_inicio}_al_{fecha_fin}.csv',
+                    mime='text/csv',
+                    use_container_width=True
+                )
+
+        st.markdown("---")
 
         # ------------------------------------------
         # CÁLCULO DE KPIS E INDICADORES CLAVE
@@ -217,11 +231,12 @@ def render_views_inbound() -> None:
             costo_ventas = 0.0
             monto_inmovilizado = costo_inventario_promedio
             cant_inmovilizados = len(df_prods)
+            df_inmovilizados = df_prods.copy()
 
-        # Rotación de inventario = Costo de lo vendido / Inventario promedio
+        # Rotación de inventario
         rotacion_inventario = (costo_ventas / costo_inventario_promedio) if costo_inventario_promedio > 0 else 0.0
 
-        # Días de permanencia (DII) en el rango seleccionado
+        # Días de permanencia (DII)
         dias_rango = max((fecha_fin - fecha_inicio).days, 1)
         dias_inventario = (dias_rango / rotacion_inventario) if rotacion_inventario > 0 else 999.0
 
@@ -234,37 +249,15 @@ def render_views_inbound() -> None:
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
 
         with kpi1:
-            st.metric(
-                "Valor Total Stock",
-                f"S/ {costo_inventario_promedio:,.2f}",
-                help="Capital invertido en inventario actualmente."
-            )
+            st.metric("Valor Total Stock", f"S/ {costo_inventario_promedio:,.2f}", help="Capital invertido en inventario.")
         with kpi2:
-            st.metric(
-                "Rotación de Stock",
-                f"{rotacion_inventario:.2f} x",
-                help="Número de veces que el inventario se ha vendido y reemplazado en el período."
-            )
+            st.metric("Rotación de Stock", f"{rotacion_inventario:.2f} x", help="Veces que rotó el inventario.")
         with kpi3:
-            st.metric(
-                "Días en Almacén",
-                f"{dias_inventario:.0f} días" if dias_inventario < 999 else "N/D",
-                help="Días promedio que tarda un producto en rotar."
-            )
+            st.metric("Días en Almacén", f"{dias_inventario:.0f} días" if dias_inventario < 999 else "N/D", help="Días promedio de permanencia.")
         with kpi4:
-            st.metric(
-                "Stock Inmovilizado",
-                f"S/ {monto_inmovilizado:,.2f}",
-                delta=f"{cant_inmovilizados} prod. sin rotar",
-                delta_color="inverse",
-                help="Monto de mercancía sin ningún movimiento en el intervalo seleccionado."
-            )
+            st.metric("Stock Inmovilizado", f"S/ {monto_inmovilizado:,.2f}", delta=f"{cant_inmovilizados} sin rotar", delta_color="inverse")
         with kpi5:
-            st.metric(
-                "Cobertura Est.",
-                f"{meses_cobertura:.1f} meses" if meses_cobertura < 99 else "> 12 meses",
-                help="Tiempo estimado que dura el inventario actual sin reponer stock."
-            )
+            st.metric("Cobertura Est.", f"{meses_cobertura:.1f} meses" if meses_cobertura < 99 else "> 12 meses")
 
         st.markdown("---")
 
@@ -272,31 +265,20 @@ def render_views_inbound() -> None:
         # 1. GRÁFICO COMPARATIVO EN MONTOS (INGRESOS VS SALIDAS S/.)
         # ------------------------------------------
         st.markdown("#### 💵 1. Ingresos vs. Salidas en Montos (S/.)")
-        st.caption("Evolución del flujo financiero de inventario en el intervalo seleccionado.")
-
         if not df_movs.empty and "tipo" in df_movs.columns:
             df_movs_monto = df_movs.merge(
-                df_prods[["id", "costo"]],
-                left_on="producto_id",
-                right_on="id",
-                how="left",
+                df_prods[["id", "costo"]], left_on="producto_id", right_on="id", how="left"
             )
             df_movs_monto["costo"] = df_movs_monto["costo"].fillna(0.0)
             df_movs_monto["monto"] = df_movs_monto["cantidad"] * df_movs_monto["costo"]
             df_movs_monto["mes_año"] = df_movs_monto["fecha"].dt.strftime("%Y-%m")
 
-            df_resumen_montos = (
-                df_movs_monto.groupby(["mes_año", "tipo"])["monto"].sum().reset_index()
-            )
+            df_resumen_montos = df_movs_monto.groupby(["mes_año", "tipo"])["monto"].sum().reset_index()
 
             fig_montos = px.bar(
                 df_resumen_montos,
-                x="mes_año",
-                y="monto",
-                color="tipo",
-                barmode="group",
-                text_auto=".2f",
-                labels={"mes_año": "Período", "monto": "Monto Total (S/.)", "tipo": "Tipo de Movimiento"},
+                x="mes_año", y="monto", color="tipo", barmode="group", text_auto=".2f",
+                labels={"mes_año": "Período", "monto": "Monto Total (S/.)", "tipo": "Movimiento"},
                 color_discrete_map={"INGRESO": "#2E7D32", "SALIDA": "#C62828"},
             )
             fig_montos.update_layout(xaxis_title="Mes", yaxis_title="Soles (S/.)")
@@ -313,63 +295,104 @@ def render_views_inbound() -> None:
         # ------------------------------------------
         with col_c1:
             st.markdown("#### 💰 2. Mayor Inversión en Stock (Top Productos)")
-            st.caption("Productos con mayor capital inmovilizado actualmente.")
-
             df_top_inversion = df_prods.sort_values(by="inversion_total", ascending=False).head(8)
-
             fig_top_inv = px.bar(
-                df_top_inversion,
-                x="inversion_total",
-                y="descripcion",
-                orientation="h",
-                text_auto=".2f",
+                df_top_inversion, x="inversion_total", y="descripcion", orientation="h", text_auto=".2f",
                 labels={"inversion_total": "Inversión Total (S/.)", "descripcion": "Producto"},
-                color="inversion_total",
-                color_continuous_scale="Blues",
+                color="inversion_total", color_continuous_scale="Blues"
             )
-            fig_top_inv.update_layout(
-                yaxis={"categoryorder": "total ascending"},
-                showlegend=False,
-                xaxis_title="Soles (S/.)",
-                yaxis_title="",
-            )
+            fig_top_inv.update_layout(yaxis={"categoryorder": "total ascending"}, showlegend=False, xaxis_title="Soles (S/.)", yaxis_title="")
             st.plotly_chart(fig_top_inv, use_container_width=True)
 
         # ------------------------------------------
-        # 3. TENDENCIA DE UNIDADES MOVIDAS (UNIDADES)
+        # 3. CLASIFICACIÓN ABC PARETO
         # ------------------------------------------
         with col_c2:
-            st.markdown("#### 📈 3. Flujo Físico de Salidas (Unidades)")
-            st.caption("Volumen de productos retirados en el período seleccionado.")
+            st.markdown("#### 📊 3. Clasificación ABC del Inventario (Pareto)")
+            df_abc = df_prods.sort_values(by="inversion_total", ascending=False).copy()
+            df_abc["acumulado"] = df_abc["inversion_total"].cumsum()
+            total_inv = df_abc["inversion_total"].sum()
+            df_abc["pct_acumulado"] = (df_abc["acumulado"] / total_inv) * 100 if total_inv > 0 else 0
 
-            if not df_movs.empty and "tipo" in df_movs.columns:
-                df_salidas = df_movs[df_movs["tipo"] == "SALIDA"].copy()
-                if not df_salidas.empty:
-                    df_salidas["mes_año"] = df_salidas["fecha"].dt.strftime("%Y-%m")
-                    df_trend = df_salidas.groupby("mes_año")["cantidad"].sum().reset_index()
-
-                    fig_line = px.line(
-                        df_trend,
-                        x="mes_año",
-                        y="cantidad",
-                        markers=True,
-                        labels={"mes_año": "Mes", "cantidad": "Unidades Salidas"},
-                        color_discrete_sequence=["#1565C0"],
-                    )
-                    fig_line.update_traces(line_width=3, marker_size=8)
-                    fig_line.update_layout(xaxis_title="Período", yaxis_title="Unidades")
-                    st.plotly_chart(fig_line, use_container_width=True)
+            def clasificar_abc(pct):
+                if pct <= 80:
+                    return "Categoría A (80% valor)"
+                elif pct <= 95:
+                    return "Categoría B (15% valor)"
                 else:
-                    st.info("💡 No se registraron salidas en el intervalo de fechas seleccionado.")
+                    return "Categoría C (5% valor)"
+
+            df_abc["Categoria_ABC"] = df_abc["pct_acumulado"].apply(clasificar_abc)
+            df_abc_summary = df_abc.groupby("Categoria_ABC")["inversion_total"].sum().reset_index()
+
+            fig_abc = px.pie(
+                df_abc_summary, values="inversion_total", names="Categoria_ABC",
+                color_discrete_sequence=px.colors.qualitative.Set2, hole=0.4
+            )
+            fig_abc.update_traces(textinfo="percent+label")
+            st.plotly_chart(fig_abc, use_container_width=True)
+
+        st.markdown("---")
+
+        col_d1, col_d2 = st.columns(2)
+
+        # ------------------------------------------
+        # 4. RANKING DE SALIDAS / VENTAS
+        # ------------------------------------------
+        with col_d1:
+            st.markdown("#### 🏆 4. Ranking de Productos Más Vendidos / Retirados")
+            if not df_movs.empty and "tipo" in df_movs.columns:
+                df_salidas = df_movs[df_movs["tipo"] == "SALIDA"].merge(
+                    df_prods[["id", "descripcion", "costo"]], left_on="producto_id", right_on="id", how="left"
+                )
+                df_salidas["monto"] = df_salidas["cantidad"] * df_salidas["costo"]
+                df_ranking = df_salidas.groupby("descripcion").agg(
+                    Unidades_Salidas=("cantidad", "sum"),
+                    Total_Soles=("monto", "sum")
+                ).reset_index().sort_values(by="Unidades_Salidas", ascending=False)
+
+                st.dataframe(
+                    df_ranking,
+                    column_config={
+                        "descripcion": "Producto",
+                        "Unidades_Salidas": "Unidades Salidas",
+                        "Total_Soles": st.column_config.NumberColumn("Total Salidas (S/.)", format="S/ %.2f")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
             else:
-                st.info("💡 No hay datos de movimientos para este rango.")
+                st.info("Sin datos de salidas en este rango.")
+
+        # ------------------------------------------
+        # 5. DETALLE DE PRODUCTOS INMOVILIZADOS
+        # ------------------------------------------
+        with col_d2:
+            st.markdown("#### 🧊 5. Detalle de Productos Inmovilizados (Sin Rotación)")
+            if not df_inmovilizados.empty:
+                df_inm_show = df_inmovilizados[["codigo", "descripcion", "stock", "inversion_total"]].sort_values(
+                    by="inversion_total", ascending=False
+                )
+                st.dataframe(
+                    df_inm_show,
+                    column_config={
+                        "codigo": "Código",
+                        "descripcion": "Descripción",
+                        "stock": "Stock Parado",
+                        "inversion_total": st.column_config.NumberColumn("Capital Parado (S/.)", format="S/ %.2f")
+                    },
+                    hide_index=True,
+                    use_container_width=True
+                )
+            else:
+                st.success("🎉 ¡Excelente! Todos los productos han tenido rotación en este rango.")
 
         st.markdown("---")
 
         # ------------------------------------------
-        # 4. TABLA DE ALERTA CON FORMATO CONDICIONAL
+        # 6. TABLA DE ALERTA CON FORMATO CONDICIONAL
         # ------------------------------------------
-        st.markdown("#### 🚨 4. Alerta de Stock Crítico")
+        st.markdown("#### 🚨 6. Alerta de Stock Crítico y Control Total")
         st.caption("Se resaltan en rojo los productos con stock menor o igual al mínimo (5 unidades).")
 
         def resaltar_bajo_stock(row):
