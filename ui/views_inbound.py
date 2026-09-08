@@ -40,7 +40,7 @@ def render_views_inbound() -> None:
         if "inbound_cart" not in st.session_state:
             st.session_state.inbound_cart = []
 
-        if not prods:
+        if not prods or not isinstance(prods, list):
             st.warning("⚠️ No hay productos registrados en el catálogo. Por favor registra productos primero.")
             return
 
@@ -49,7 +49,7 @@ def render_views_inbound() -> None:
             for p in prods
         }
 
-        dict_provs = {pr["nombre"]: pr["id"] for pr in provs} if provs else {}
+        dict_provs = {pr["nombre"]: pr["id"] for pr in provs} if provs and isinstance(provs, list) else {}
         lista_provs = ["(Sin proveedor asignado)"] + list(dict_provs.keys())
 
         st.markdown("### 📄 Datos del Comprobante")
@@ -150,7 +150,7 @@ def render_views_inbound() -> None:
     with tab_analytics:
         st.markdown("### 📈 Control Visual e Indicadores de Inventario")
 
-        if not prods:
+        if not prods or not isinstance(prods, list):
             st.info("No hay datos de productos suficientes para mostrar el dashboard.")
             return
 
@@ -158,7 +158,7 @@ def render_views_inbound() -> None:
         df_prods["stock"] = pd.to_numeric(df_prods["stock"], errors="coerce").fillna(0)
         df_prods["costo"] = pd.to_numeric(df_prods["costo"], errors="coerce").fillna(0.0)
         
-        # Asignar valores por defecto para evitar el error de BD
+        # Asignar valores por defecto para evitar errores de columnas no existentes en BD
         df_prods["stock_minimo"] = 5
         df_prods["categoria"] = "General"
         df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
@@ -203,26 +203,29 @@ def render_views_inbound() -> None:
             st.markdown("#### 📈 3. Tendencia de Salidas / Flujo de Stock")
             st.caption("Comportamiento mensual para proyección de reabastecimiento.")
             
-            movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
-            if movs:
-                df_movs = pd.DataFrame(movs)
-                if "fecha" in df_movs.columns:
-                    df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
-                    df_trend = df_movs.groupby(df_movs["fecha"].dt.to_period("M"))["cantidad"].sum().reset_index()
-                    df_trend["fecha"] = df_trend["fecha"].astype(str)
+            try:
+                movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
+                if movs and isinstance(movs, list):
+                    df_movs = pd.DataFrame(movs)
+                    if "fecha" in df_movs.columns:
+                        df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
+                        df_trend = df_movs.groupby(df_movs["fecha"].dt.to_period("M"))["cantidad"].sum().reset_index()
+                        df_trend["fecha"] = df_trend["fecha"].astype(str)
 
-                    fig_line = px.line(
-                        df_trend,
-                        x="fecha",
-                        y="cantidad",
-                        markers=True,
-                        labels={"fecha": "Mes", "cantidad": "Unidades Moviéndose"},
-                    )
-                    st.plotly_chart(fig_line, use_container_width=True)
+                        fig_line = px.line(
+                            df_trend,
+                            x="fecha",
+                            y="cantidad",
+                            markers=True,
+                            labels={"fecha": "Mes", "cantidad": "Unidades Moviéndose"},
+                        )
+                        st.plotly_chart(fig_line, use_container_width=True)
+                    else:
+                        st.info("💡 La tabla de movimientos no registra columna de fecha aún.")
                 else:
-                    st.info("💡 La tabla de movimientos no registra columna de fecha aún.")
-            else:
-                st.info("💡 Sin registros históricos en movimientos para trazar la tendencia.")
+                    st.info("💡 Sin registros históricos en movimientos para trazar la tendencia.")
+            except Exception:
+                st.info("💡 La tabla 'movimientos_inventario' aún no está registrada en la base de datos.")
 
         st.markdown("---")
 
