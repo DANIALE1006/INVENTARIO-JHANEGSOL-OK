@@ -187,7 +187,6 @@ def render_views_inbound() -> None:
             st.markdown("#### 💰 2. Mayor Inversión en Stock (Top Productos)")
             st.caption("Productos que concentran el mayor valor monetario inmovilizado.")
             
-            # Ordenar por inversión total y mostrar el top productos
             df_top_inversion = df_prods.sort_values(by="inversion_total", ascending=False).head(8)
             
             fig_top_inv = px.bar(
@@ -208,11 +207,38 @@ def render_views_inbound() -> None:
             )
             st.plotly_chart(fig_top_inv, use_container_width=True)
 
-        # 3. SECCIÓN TENDENCIA
+        # 3. GRÁFICO DE LÍNEAS (TENDENCIA DE FLUJO DE STOCK)
         with col_c2:
             st.markdown("#### 📈 3. Tendencia de Salidas / Flujo de Stock")
             st.caption("Comportamiento mensual para proyección de reabastecimiento.")
-            st.info("💡 Módulo listo. Requiere crear la tabla de historial de movimientos para activar el gráfico de tendencia temporal.")
+            
+            try:
+                movs = ejecutar_consulta("movimientos_inventario", consulta_type="select")
+                if movs and isinstance(movs, list):
+                    df_movs = pd.DataFrame(movs)
+                    if "fecha" in df_movs.columns:
+                        df_movs["fecha"] = pd.to_datetime(df_movs["fecha"])
+                        # Agrupar por Mes-Año
+                        df_movs["mes_año"] = df_movs["fecha"].dt.strftime("%Y-%m")
+                        df_trend = df_movs.groupby("mes_año")["cantidad"].sum().reset_index()
+
+                        fig_line = px.line(
+                            df_trend,
+                            x="mes_año",
+                            y="cantidad",
+                            markers=True,
+                            labels={"mes_año": "Mes", "cantidad": "Unidades Moviéndose"},
+                            color_discrete_sequence=["#2E7D32"]
+                        )
+                        fig_line.update_traces(line_width=3, marker_size=8)
+                        fig_line.update_layout(xaxis_title="Período", yaxis_title="Unidades")
+                        st.plotly_chart(fig_line, use_container_width=True)
+                    else:
+                        st.info("💡 La tabla 'movimientos_inventario' no posee la columna 'fecha'.")
+                else:
+                    st.info("💡 La tabla de movimientos está vacía actualmente.")
+            except Exception:
+                st.info("💡 Módulo listo. Requiere ejecutar el script SQL para crear la tabla de movimientos.")
 
         st.markdown("---")
 
