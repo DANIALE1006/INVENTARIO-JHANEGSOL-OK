@@ -160,7 +160,6 @@ def render_views_inbound() -> None:
         
         # Asignar valores por defecto para evitar errores de columnas no existentes en BD
         df_prods["stock_minimo"] = 5
-        df_prods["categoria"] = "General"
         df_prods["inversion_total"] = df_prods["stock"] * df_prods["costo"]
 
         # 1. GRÁFICO DE BARRAS (Stock Actual)
@@ -183,22 +182,33 @@ def render_views_inbound() -> None:
 
         col_c1, col_c2 = st.columns(2)
 
-        # 2. GRÁFICO CIRCULAR / ANILLO (Composición por Categorías)
+        # 2. MAYOR INVERSIÓN EN STOCK (ANÁLISIS DE CAPITAL RETENIDO)
         with col_c1:
-            st.markdown("#### 🍩 2. Valor del Inventario por Categoría")
-            st.caption("Porcentaje de inversión total según el grupo o categoría.")
+            st.markdown("#### 💰 2. Mayor Inversión en Stock (Top Productos)")
+            st.caption("Productos que concentran el mayor valor monetario inmovilizado.")
             
-            fig_pie = px.pie(
-                df_prods,
-                names="categoria",
-                values="inversion_total",
-                hole=0.4,
-                color_discrete_sequence=px.colors.qualitative.Set3,
+            # Ordenar por inversión total y mostrar el top productos
+            df_top_inversion = df_prods.sort_values(by="inversion_total", ascending=False).head(8)
+            
+            fig_top_inv = px.bar(
+                df_top_inversion,
+                x="inversion_total",
+                y="descripcion",
+                orientation="h",
+                text_auto=".2f",
+                labels={"inversion_total": "Inversión Total (S/.)", "descripcion": "Producto"},
+                color="inversion_total",
+                color_continuous_scale="Blues"
             )
-            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_top_inv.update_layout(
+                yaxis={"categoryorder": "total ascending"},
+                showlegend=False,
+                xaxis_title="Soles (S/.)",
+                yaxis_title=""
+            )
+            st.plotly_chart(fig_top_inv, use_container_width=True)
 
-        # 3. SECCIÓN TENDENCIA (Sin realizar consulta a tabla inexistente)
+        # 3. SECCIÓN TENDENCIA
         with col_c2:
             st.markdown("#### 📈 3. Tendencia de Salidas / Flujo de Stock")
             st.caption("Comportamiento mensual para proyección de reabastecimiento.")
