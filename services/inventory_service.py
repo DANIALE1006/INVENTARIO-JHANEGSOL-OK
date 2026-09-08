@@ -5,10 +5,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 from core.database import ejecutar_consulta, ajustar_stock_rpc, get_supabase_client
 
+
 def obtener_catalogo_productos() -> List[Dict[str, Any]]:
     """Obtiene la lista completa de productos ordenados por código."""
     prods = ejecutar_consulta("productos", consulta_type="select", order_col="codigo", desc=False)
     return prods if prods else []
+
 
 def crear_producto(
     codigo: str,
@@ -48,6 +50,7 @@ def crear_producto(
         return True, "Producto registrado exitosamente."
     return False, "Error al insertar el producto en la base de datos."
 
+
 def verificar_disponibilidad_stock(producto_id: str, cantidad_requerida: int) -> Tuple[bool, int, str]:
     """
     Verifica si hay stock suficiente para un producto.
@@ -68,6 +71,7 @@ def verificar_disponibilidad_stock(producto_id: str, cantidad_requerida: int) ->
     
     return True, stock_actual, "Stock disponible."
 
+
 def registrar_ingreso_compra(
     producto_id: str,
     cantidad: int,
@@ -76,9 +80,7 @@ def registrar_ingreso_compra(
     nro_factura: str = "",
 ) -> Tuple[bool, str]:
     """
-    Registra el ingreso de mercadería por compra:
-    - Actualiza el costo unitario del producto.
-    - Incrementa el stock de forma atómica mediante RPC.
+    Registra el ingreso individual de mercadería por compra.
     """
     if cantidad <= 0:
         return False, "La cantidad a ingresar debe ser mayor a cero."
@@ -100,6 +102,68 @@ def registrar_ingreso_compra(
         return False, "Error al actualizar el stock en almacén."
     
     return True, f"Ingreso registrado correctamente. Nuevo stock disponible: {nuevo_stock} unidades."
+
+
+def registrar_ingreso_compra_lote(
+    items: List[Dict[str, Any]],
+    proveedor_id: Optional[str] = None,
+    nro_factura: str = ""
+) -> Tuple[bool, str]:
+    """
+    Registra el ingreso masivo/multiproducto de mercadería.
+    
+    Estructura esperada de cada elemento en 'items':
+    [
+        {
+            "producto_id": "uuid-o-id",
+            "cantidad": 10,
+            "nuevo_costo": 25.50
+        }, ...
+    ]
+    """
+    if not items:
+        return False, "La lista de productos para ingresar está vacía."
+
+    items_procesados = 0
+    errores = []
+
+    for idx, item in enumerate(items, start=1):
+        p_id = item.get("producto_id")
+        cant = int(item.get("cantidad", 0))
+        costo = float(item.get("nuevo_costo", 0.0))
+
+        if not p_id or cant <= 0:
+            errores.append(f"Fila {idx}: Datos de producto o cantidad inválidos.")
+            continue
+
+        # 1. Actualizar costo en la tabla de productos
+        upd_res = ejecutar_consulta(
+            "productos",
+            consulta_type="update",
+            data={"costo": round(costo, 2)},
+            eq_col="id",
+            eq_val=p_id
+        )
+
+        if not upd_res:
+            errores.append(f"Fila {idx}: Error al actualizar el costo del producto ID {p_id}.")
+            continue
+
+        # 2. Sumar stock de forma atómica mediante RPC
+        nuevo_stock = ajustar_stock_rpc(p_id, cant)
+        if nuevo_stock is None:
+            errores.append(f"Fila {idx}: Error al incrementar stock en RPC para el producto ID {p_id}.")
+            continue
+
+        items_procesados += 1
+
+    if errores and items_procesados == 0:
+        return False, f"No se pudo procesar ningún producto. Detalle: {'; '.join(errores)}"
+    elif errores:
+        return True, f"Ingreso parcial completado ({items_procesados}/{len(items)} items procesados). Hubo observaciones: {'; '.join(errores)}"
+
+    return True, f"Se procesó exitosamente el ingreso de {items_procesados} productos al inventario."
+
 
 def obtener_metricas_inventario() -> Dict[str, Any]:
     """Calcula métricas clave del inventario para el dashboard."""
@@ -133,9 +197,6 @@ def obtener_metricas_inventario() -> Dict[str, Any]:
         "items_quiebre": items_quiebre,
     }
 
-# ==========================================
-# NUEVAS FUNCIONES ANALÍTICAS
-# ==========================================
 
 def obtener_productos_quiebre_stock() -> list:
     """Devuelve los productos cuyo stock actual es menor o igual al mínimo."""
@@ -148,6 +209,7 @@ def obtener_productos_quiebre_stock() -> list:
     
     quiebres = df[df["stock"] <= df["stock_minimo"]]
     return quiebres.to_dict(orient="records")
+
 
 def obtener_top_productos_vendidos(limit: int = 5) -> list:
     """Calcula los productos más vendidos sumando las cantidades de detalle_comprobante."""
@@ -175,11 +237,13 @@ def obtener_top_productos_vendidos(limit: int = 5) -> list:
         print(f"Error calculando top ventas: {e}")
         return []
 
+
 def obtener_sugerencia_proveedores() -> list:
     """Muestra la relación de productos con su proveedor sugerido y costo asignado."""
     prods = obtener_catalogo_productos()
     if not prods:
         return []
+        
     df = pd.DataFrame(prods)
     cols = ["codigo", "descripcion", "costo", "precio", "proveedor"]
     cols_existentes = [c for c in cols if c in df.columns]
